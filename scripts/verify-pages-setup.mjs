@@ -11,6 +11,12 @@ if (fs.existsSync(path.join(root, 'CNAME'))) {
   )
 }
 
+if (!fs.existsSync(path.join(root, '.nojekyll'))) {
+  errors.push(
+    'Root .nojekyll is required to prevent GitHub from serving README.md via Jekyll when branch deploy is accidentally enabled.'
+  )
+}
+
 if (fs.existsSync(path.join(root, '.vitepress'))) {
   errors.push(
     'Root .vitepress/ must not exist. VitePress config lives in docs/.vitepress/ only.'
