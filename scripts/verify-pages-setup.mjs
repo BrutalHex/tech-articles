@@ -6,6 +6,12 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const errors = []
 const domain = 'tech.mohammadabbasi.com'
 
+if (fs.existsSync(path.join(root, 'docs/CNAME'))) {
+  errors.push(
+    'docs/CNAME must not exist. GitHub adds this when Pages source is set to the /docs folder; that mode serves raw Markdown and breaks VitePress. Use Settings → Pages → Source: GitHub Actions, and keep the custom domain in the root CNAME file only.'
+  )
+}
+
 if (fs.existsSync(path.join(root, 'docs/public/CNAME'))) {
   errors.push(
     'docs/public/CNAME must not exist. It conflicts with the custom domain in GitHub Settings and causes a 404 loop. Use the root CNAME file and Settings → Pages → Custom domain instead.'
@@ -30,7 +36,9 @@ if (fs.existsSync(path.join(root, '.vitepress'))) {
 }
 
 if (!fs.existsSync(path.join(root, 'docs/public/.nojekyll'))) {
-  errors.push('docs/public/.nojekyll is required to disable Jekyll in the deployed artifact.')
+  errors.push(
+    'docs/public/.nojekyll is required. VitePress copies docs/public/ into the build output; without .nojekyll, GitHub Pages runs Jekyll and breaks asset paths.'
+  )
 }
 
 const config = fs.readFileSync(path.join(root, 'docs/.vitepress/config.mts'), 'utf-8')
