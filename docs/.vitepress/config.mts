@@ -1,11 +1,11 @@
 import { defineConfig } from 'vitepress'
+import { getSidebar } from './utils/posts.mts'
 
 export default defineConfig({
   title: 'BrutalHex Tech Articles',
   description: 'Technical articles and engineering notes',
 
-  // This is important for GitHub Pages deployment
-  base: '/tech-articles/',
+  base: '/',
 
   cleanUrls: true,
 
@@ -15,17 +15,9 @@ export default defineConfig({
       { text: 'Articles', link: '/posts/' }
     ],
 
-    sidebar: [
-      {
-        text: 'Articles',
-        items: [
-          {
-            text: 'The AI-powered Agentic Chain',
-            link: '/posts/2026-06-22-agentic-chain/'
-          }
-        ]
-      }
-    ],
+    sidebar: {
+      '/posts/': getSidebar()
+    },
 
     socialLinks: [
       { icon: 'github', link: 'https://github.com/BrutalHex/tech-articles' }

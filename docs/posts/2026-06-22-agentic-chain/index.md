@@ -1,3 +1,10 @@
+---
+title: The AI-powered Agentic Chain
+date: 2026-06-22
+category: AI & Agents
+description: Multi-agent workflows with LangGraph and LLMs — planning, parallel specialists, RAG, synthesis, and critique loops.
+---
+
 # The AI-powered Agentic Chain: Multi-Agent Workflows with LangGraph and LLMs
 
 
