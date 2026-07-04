@@ -4,35 +4,29 @@ import { fileURLToPath } from 'node:url'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const errors = []
+const domain = 'tech.mohammadabbasi.com'
 
-if (fs.existsSync(path.join(root, 'CNAME'))) {
+if (fs.existsSync(path.join(root, 'docs/public/CNAME'))) {
   errors.push(
-    'Root CNAME must not exist. GitHub uses it for branch-based Jekyll deploy, which serves README.md instead of the VitePress site. Keep the domain only in docs/public/CNAME.'
+    'docs/public/CNAME must not exist. It conflicts with the custom domain in GitHub Settings and causes a 404 loop. Use the root CNAME file and Settings → Pages → Custom domain instead.'
   )
 }
 
-if (!fs.existsSync(path.join(root, '.nojekyll'))) {
+if (!fs.existsSync(path.join(root, 'CNAME'))) {
   errors.push(
-    'Root .nojekyll is required to prevent GitHub from serving README.md via Jekyll when branch deploy is accidentally enabled.'
+    `Root CNAME is required with "${domain}". Set the custom domain in GitHub Settings → Pages; GitHub uses the root CNAME file for domain routing.`
   )
+} else {
+  const cname = fs.readFileSync(path.join(root, 'CNAME'), 'utf-8').trim()
+  if (cname !== domain) {
+    errors.push(`Root CNAME must be "${domain}", found "${cname}".`)
+  }
 }
 
 if (fs.existsSync(path.join(root, '.vitepress'))) {
   errors.push(
     'Root .vitepress/ must not exist. VitePress config lives in docs/.vitepress/ only.'
   )
-}
-
-const publicCnamePath = path.join(root, 'docs/public/CNAME')
-if (!fs.existsSync(publicCnamePath)) {
-  errors.push(
-    'docs/public/CNAME is required — do not delete it. It configures tech.mohammadabbasi.com for the VitePress deploy. Only a root /CNAME file (repo root) must be avoided.'
-  )
-} else {
-  const cname = fs.readFileSync(publicCnamePath, 'utf-8').trim()
-  if (!cname) {
-    errors.push('docs/public/CNAME must contain the custom domain.')
-  }
 }
 
 if (!fs.existsSync(path.join(root, 'docs/public/.nojekyll'))) {
