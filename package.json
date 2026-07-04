@@ -1,7 +1,7 @@
 {
   "scripts": {
     "docs:dev": "node scripts/generate-posts-index.mjs && vitepress dev docs",
-    "docs:build": "node scripts/generate-posts-index.mjs && vitepress build docs",
+    "docs:build": "node scripts/verify-pages-setup.mjs && node scripts/generate-posts-index.mjs && vitepress build docs",
     "docs:preview": "vitepress preview docs"
   },
   "devDependencies": {
