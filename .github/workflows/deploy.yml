@@ -26,6 +26,43 @@ jobs:
       - name: Verify Pages setup
         run: node scripts/verify-pages-setup.mjs
 
+      - name: Switch Pages source to GitHub Actions
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CUSTOM_DOMAIN: tech.mohammadabbasi.com
+        run: |
+          set -euo pipefail
+          api() {
+            curl -fsS \
+              -H "Authorization: Bearer ${GH_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "$@"
+          }
+
+          if ! api "https://api.github.com/repos/${GITHUB_REPOSITORY}/pages" -o /tmp/pages.json; then
+            echo "Pages is not enabled yet; configure-pages will initialize it."
+            exit 0
+          fi
+
+          build_type="$(node -e 'console.log(JSON.parse(require("fs").readFileSync("/tmp/pages.json","utf8")).build_type || "")')"
+          if [ "$build_type" = "workflow" ]; then
+            echo "Pages already uses GitHub Actions."
+            exit 0
+          fi
+
+          echo "Switching Pages from legacy branch/docs to GitHub Actions..."
+          if api -o /tmp/pages-put.txt -w "%{http_code}" -X PUT \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/pages" \
+            -d "{\"build_type\":\"workflow\",\"cname\":\"${CUSTOM_DOMAIN}\",\"source\":{\"branch\":\"main\",\"path\":\"/\"}}" \
+            | grep -qx "204"; then
+            echo "Pages source switched to GitHub Actions."
+          else
+            echo "::warning::Could not switch Pages source automatically."
+            cat /tmp/pages-put.txt || true
+            echo "In repo Settings → Pages, set Source to GitHub Actions (not Deploy from branch /docs)."
+          fi
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -59,3 +96,17 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
+
+      - name: Verify custom domain responds
+        run: |
+          for attempt in 1 2 3 4 5 6; do
+            status="$(curl -s -o /dev/null -w "%{http_code}" "https://tech.mohammadabbasi.com/")"
+            if [ "$status" = "200" ]; then
+              echo "Custom domain is live (HTTP 200)."
+              exit 0
+            fi
+            echo "Attempt ${attempt}: https://tech.mohammadabbasi.com/ returned HTTP ${status}; retrying in 20s..."
+            sleep 20
+          done
+          echo "::warning::Custom domain still not returning HTTP 200. If Settings → Pages → Source is still 'Deploy from branch /docs', switch it to GitHub Actions."
+          exit 0
