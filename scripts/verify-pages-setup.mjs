@@ -25,7 +25,9 @@ if (fs.existsSync(path.join(root, '.vitepress'))) {
 
 const publicCnamePath = path.join(root, 'docs/public/CNAME')
 if (!fs.existsSync(publicCnamePath)) {
-  errors.push('docs/public/CNAME is required for the custom domain in the deployed artifact.')
+  errors.push(
+    'docs/public/CNAME is required — do not delete it. It configures tech.mohammadabbasi.com for the VitePress deploy. Only a root /CNAME file (repo root) must be avoided.'
+  )
 } else {
   const cname = fs.readFileSync(publicCnamePath, 'utf-8').trim()
   if (!cname) {
