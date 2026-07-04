@@ -23,6 +23,13 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Remove conflicting root CNAME
+        run: |
+          if [ -f CNAME ]; then
+            echo "Removing root CNAME. Custom domain is configured via docs/public/CNAME."
+            rm CNAME
+          fi
+
       - name: Verify Pages setup
         run: node scripts/verify-pages-setup.mjs
 
