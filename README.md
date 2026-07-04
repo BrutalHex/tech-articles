@@ -2,13 +2,13 @@
 
 Technical articles, engineering notes, and high-quality code samples.
 
-Published automatically to a custom subdomain using **Hugo** + **GitHub Actions** + **GitHub Pages**.
+Published automatically to a custom subdomain using **VitePress** + **GitHub Actions** + **GitHub Pages**.
 
 ## 🚀 Features
 
 - Clean Markdown source of truth
 - Beautiful code highlighting
-- Sample code lives right next to the articles that use it (using Hugo page bundles)
+- Sample code lives right next to the articles that use it (using VitePress page bundles)
 - Automatic deployment on every push
 - Custom subdomain support (e.g. `articles.yourdomain.com`)
 - Tags, categories, reading time, RSS feed
@@ -19,14 +19,13 @@ Published automatically to a custom subdomain using **Hugo** + **GitHub Actions*
 ```
 tech-articles/
 ├── .github/workflows/
-│   └── deploy.yml          # GitHub Actions → Hugo build + deploy to Pages
-├── content/
+│   └── deploy.yml          # GitHub Actions → VitePress build + deploy to Pages
+├── docs/
 │   └── posts/
 │       └── YYYY-MM-DD-article-slug/
 │           ├── index.md           # The article (frontmatter + Markdown)
 │           ├── code/              # Sample code files for this article
 │           └── images/            # Diagrams & screenshots
-├── hugo.toml                 # Hugo configuration
 ├── static/                     # Global assets (favicon, etc.)
 └── README.md
 ```
@@ -35,7 +34,7 @@ tech-articles/
 
 1. Create a new folder:
    ```bash
-   hugo new posts/2026-06-25-my-new-article/index.md
+   VitePress new posts/2026-06-25-my-new-article/index.md
    ```
 2. Edit `index.md` with YAML/TOML frontmatter + Markdown.
 3. Add sample code in the `code/` folder inside the article directory.
@@ -49,7 +48,7 @@ tech-articles/
  title = "My Technical Article Title"
  date = 2026-06-25
  draft = false
- tags = ["github", "hugo", "devops"]
+ tags = ["github", "VitePress", "devops"]
  categories = ["Engineering"]
  summary = "Short description for listings and SEO."
 +++
@@ -58,20 +57,20 @@ tech-articles/
 ## 🚀 Local Development
 
 ```bash
-# 1. Install Hugo (extended version recommended)
-# https://gohugo.io/installation/
+# 1. Install VitePress (extended version recommended)
+# https://goVitePress.io/installation/
 
 # 2. Clone this repo
 git clone https://github.com/BrutalHex/tech-articles.git
 cd tech-articles
 
 # 3. (Recommended) Add PaperMod theme
-git submodule add https://github.com/adityatelange/hugo-PaperMod.git themes/PaperMod
+git submodule add https://github.com/adityatelange/VitePress-PaperMod.git themes/PaperMod
 
-# 4. Update hugo.toml: set theme = "PaperMod"
+# 4. Update VitePress.toml: set theme = "PaperMod"
 
 # 5. Run local server
-hugo server -D
+VitePress server -D
 ```
 
 Open http://localhost:1313
@@ -95,7 +94,7 @@ GitHub automatically provides HTTPS.
 ## 📄 Sample Article
 
 See the first article in:
-`content/posts/2026-06-22-welcome-to-tech-articles/`
+`docs/posts/2026-06-22-welcome-to-tech-articles/`
 
 It demonstrates page bundles (article + code folder) and code samples.
 
@@ -103,7 +102,7 @@ It demonstrates page bundles (article + code folder) and code samples.
 
 The workflow (`.github/workflows/deploy.yml`) does the following on every push:
 - Checks out the repo (with submodules)
-- Installs latest Hugo extended
+- Installs latest VitePress extended
 - Builds the site with `--minify`
 - Deploys to GitHub Pages using official actions
 
@@ -121,4 +120,4 @@ Feel free to improve articles, add new ones, or enhance the setup.
 
 ---
 
-Made with ❤️ using Markdown, Hugo, and GitHub Actions.
+Made with ❤️ using Markdown, VitePress, and GitHub Actions.

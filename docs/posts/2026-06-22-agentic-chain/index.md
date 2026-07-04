@@ -74,7 +74,7 @@ CHROMA_PORT="8000"
 After saving the `.env` file, you can start the infrastructure services with:
 
 ```bash
-cd ./content/posts/2026-06-22-agentic-chain/code/ && \
+cd ./docs/posts/2026-06-22-agentic-chain/code/ && \
 docker compose up -d
 ```
 
@@ -192,7 +192,7 @@ This design gives us several production-grade capabilities in one clean graph:
 
 ## Constructing the Workflow
 
-The complete agentic workflow is orchestrated in [`graph.py`](https://github.com/BrutalHex/tech-articles/blob/main/content/posts/2026-06-22-agentic-chain/code/src/graph.py). This file serves as the architectural backbone of the system, where every major component — the planner, router, specialists, aggregator, synthesizer, and critic — is composed into a single, coherent, and executable graph. Rather than relying on rigid sequential chains, the implementation leverages [LangGraph](https://langchain-ai.github.io/langgraph/)'s [`StateGraph`](https://langchain-ai.github.io/langgraph/reference/graphs/#langgraph.graph.state.StateGraph) to create a clear, visual, and highly maintainable structure. Each logical step in the process is defined as a node, while the relationships between them are expressed through edges, including both conditional routing and dynamic parallel execution.
+The complete agentic workflow is orchestrated in [`graph.py`](https://github.com/BrutalHex/tech-articles/blob/main/docs/posts/2026-06-22-agentic-chain/code/src/graph.py). This file serves as the architectural backbone of the system, where every major component — the planner, router, specialists, aggregator, synthesizer, and critic — is composed into a single, coherent, and executable graph. Rather than relying on rigid sequential chains, the implementation leverages [LangGraph](https://langchain-ai.github.io/langgraph/)'s [`StateGraph`](https://langchain-ai.github.io/langgraph/reference/graphs/#langgraph.graph.state.StateGraph) to create a clear, visual, and highly maintainable structure. Each logical step in the process is defined as a node, while the relationships between them are expressed through edges, including both conditional routing and dynamic parallel execution.
 
 Execution begins at the planner, which decomposes the incoming task and determines the appropriate specialists required. Control then flows to the router, which utilizes LangGraph’s powerful [`Send` API](https://langchain-ai.github.io/langgraph/how-tos/map-reduce/) to dynamically instantiate multiple specialist nodes that run in parallel. Once their individual contributions are complete, results converge at the aggregator before moving to the synthesizer, which crafts a unified and grounded final response. The critic subsequently assesses this output and determines whether further refinement is necessary. If improvement is required and the iteration threshold has not been exceeded, the workflow intelligently loops back to the planner — creating a controlled reflection cycle that allows the system to self-correct before producing its final answer.
 
@@ -207,7 +207,7 @@ One of the most powerful capabilities of the specialist agents in this agentic c
 
 ### What `rag.py` Does
 
-The [rag.py](https://github.com/BrutalHex/tech-articles/blob/main/content/posts/2026-06-22-agentic-chain/code/src/rag.py) module is responsible for creating **domain-specific search tools** that the specialist agents can call. Instead of giving every specialist access to the entire knowledge base, we create separate tools for different domains:
+The [rag.py](https://github.com/BrutalHex/tech-articles/blob/main/docs/posts/2026-06-22-agentic-chain/code/src/rag.py) module is responsible for creating **domain-specific search tools** that the specialist agents can call. Instead of giving every specialist access to the entire knowledge base, we create separate tools for different domains:
 
 - `research_search`
 - `finance_search`
@@ -230,7 +230,7 @@ The module exposes three `StructuredTool` instances created by the `build_rag_to
 Each tool follows the same pattern:
 1. Takes a natural language `query`
 2. Retrieves the top 5 most relevant documents (`k=5`)
-3. Returns the concatenated `page_content` as a single string
+3. Returns the concatenated `page_docs` as a single string
 
 Because these are proper LangChain `StructuredTool` objects with rich descriptions, the LLM agents can intelligently decide when and how to use them.
 
@@ -302,7 +302,7 @@ The LangChain framework offers a rich collection of ready-made tools that you ca
 
 | Tool                        | Description                                      | Link |
 |----------------------------|--------------------------------------------------|------|
-| **Wikipedia**              | Search and retrieve content from Wikipedia       | [LangChain Wikipedia Tool](https://python.langchain.com/docs/integrations/tools/wikipedia/) |
+| **Wikipedia**              | Search and retrieve docs from Wikipedia       | [LangChain Wikipedia Tool](https://python.langchain.com/docs/integrations/tools/wikipedia/) |
 | **Arxiv**                  | Search academic papers on arXiv                  | [LangChain Arxiv Tool](https://python.langchain.com/docs/integrations/tools/arxiv/) |
 | **Tavily Search**          | High-quality web search optimized for AI agents  | [Tavily Search](https://python.langchain.com/docs/integrations/tools/tavily_search/) |
 | **YouTube Search**         | Search and transcribe YouTube videos             | [LangChain YouTube Tool](https://python.langchain.com/docs/integrations/tools/youtube/) |
@@ -313,7 +313,7 @@ You can explore the full list of available tools in the official [LangChain Tool
 
 ## Configuring LLM and Embedding Models
 
-All language model calls and vector embeddings in this agentic chain are configured through a dedicated module called [`openai_config.py`](https://github.com/BrutalHex/tech-articles/blob/main/content/posts/2026-06-22-agentic-chain/code/src/openai_config.py). This file centralizes the creation of both the chat model and the embedding model, ensuring consistent settings, proper error handling, and easy customization across the entire system. Instead of scattering model initialization throughout the codebase, the project uses two factory functions — `create_chat_llm()` and `create_embeddings()` — that return properly configured LangChain objects ready to be used by planners, specialists, and the critic.
+All language model calls and vector embeddings in this agentic chain are configured through a dedicated module called [`openai_config.py`](https://github.com/BrutalHex/tech-articles/blob/main/docs/posts/2026-06-22-agentic-chain/code/src/openai_config.py). This file centralizes the creation of both the chat model and the embedding model, ensuring consistent settings, proper error handling, and easy customization across the entire system. Instead of scattering model initialization throughout the codebase, the project uses two factory functions — `create_chat_llm()` and `create_embeddings()` — that return properly configured LangChain objects ready to be used by planners, specialists, and the critic.
 
 The chat model is powered by OpenAI’s `gpt-4o-mini`, chosen for its excellent balance of speed, cost, and reasoning capability. The embedding model used for RAG is `text-embedding-3-small`, which provides strong semantic quality at a very reasonable cost and dimension size. Both models share a common HTTP client configured with sensible timeouts and automatic retries, making the system more resilient when calling external APIs. Two particularly important parameters are set here: `temperature` is fixed at `0.2` to keep responses focused and deterministic rather than creative, which is generally preferred in agentic workflows where consistency and reliability matter more than randomness. The `max_retries` parameter is set to `3`, allowing the system to gracefully recover from transient network issues or rate limits without failing the entire task.
 
