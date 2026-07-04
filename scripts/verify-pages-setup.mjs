@@ -23,8 +23,14 @@ if (fs.existsSync(path.join(root, '.vitepress'))) {
   )
 }
 
-if (!fs.existsSync(path.join(root, 'docs/public/CNAME'))) {
+const publicCnamePath = path.join(root, 'docs/public/CNAME')
+if (!fs.existsSync(publicCnamePath)) {
   errors.push('docs/public/CNAME is required for the custom domain in the deployed artifact.')
+} else {
+  const cname = fs.readFileSync(publicCnamePath, 'utf-8').trim()
+  if (!cname) {
+    errors.push('docs/public/CNAME must contain the custom domain.')
+  }
 }
 
 if (!fs.existsSync(path.join(root, 'docs/public/.nojekyll'))) {
