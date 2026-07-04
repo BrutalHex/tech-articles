@@ -2,7 +2,7 @@
 layout: home
 
 hero:
-  name: "BrutalHex Tech Articles"
+  name: "Tech Articles"
   text: "In-depth technical articles on AI, systems, and engineering"
   tagline: "Practical implementations and architectural insights"
   actions:
