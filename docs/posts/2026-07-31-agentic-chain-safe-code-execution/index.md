@@ -1,11 +1,11 @@
 ---
-title: Secure code execution for LLMs
+title: The Secure Code Execution For LLMs
 date: 2026-07-31
 category: AI & Agents
 description: Isolate LLM-generated Python with Kubernetes agent-sandbox, gVisor, and warm pools — building on the Agentic Chain.
 ---
 
-# The AI-powered Agentic Chain: Secure code execution for LLMs
+# The Secure Code Execution For LLMs
 
 
 ## Prologue
