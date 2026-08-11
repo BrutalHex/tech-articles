@@ -1,0 +1,25 @@
+# Strategic-merge patch: constrain controller for low-memory WSL/kind POC.
+# Resource limits live here (kustomize only — never kubectl set resources).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agent-sandbox-controller
+  namespace: agent-sandbox-system
+spec:
+  replicas: 1
+  template:
+    spec:
+      containers:
+        - name: agent-sandbox-controller
+          imagePullPolicy: IfNotPresent
+          # Single-replica POC: skip leader-election chatter.
+          args:
+            - --leader-elect=false
+            - --extensions
+          resources:
+            requests:
+              cpu: 15m
+              memory: 32Mi
+            limits:
+              cpu: 100m
+              memory: 96Mi

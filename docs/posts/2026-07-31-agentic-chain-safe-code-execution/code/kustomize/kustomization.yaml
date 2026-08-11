@@ -1,0 +1,11 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Top-level overlay composes:
+#   1) agent-sandbox operator (cluster-scoped; keeps its own agent-sandbox-system NS)
+#   2) RuntimeClass gvisor (primary) + kata (fallback option on node pools)
+#   3) app stack in agentic-chain (postgres, chroma, warm pool, UI)
+resources:
+  - agent-sandbox-operator
+  - runtime-isolation
+  - stack
