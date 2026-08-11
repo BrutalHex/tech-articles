@@ -39,7 +39,16 @@ Before diving into the agentic chain implementation, make sure your development 
   - **PostgreSQL 16** — used by `PostgresSaver` for graph checkpointing, persistence, and resumability across runs or crashes.
   - **Chroma** — [the vector database](https://www.trychroma.com/) that powers the RAG tools available to the specialist agents.
 
+### Clone the Repository
 
+Clone this site’s source repository and enter the code directory for this post:
+
+```bash
+git clone https://github.com/BrutalHex/tech-articles && \
+cd tech-articles/docs/posts/2026-06-22-agentic-chain/code
+```
+
+All following steps in this section assume your shell is already in that `code/` directory.
 
 ### Creating the `.env` File
 

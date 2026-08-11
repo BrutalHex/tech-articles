@@ -23,21 +23,22 @@ def _api_key() -> str:
 
 
 def verify_openai_connectivity() -> None:
-    """Check DNS with retries — WSL DNS can be briefly unavailable."""
+    """Check DNS with retries — WSL/kind DNS can be briefly unavailable."""
     import time
 
     last_error: Exception | None = None
-    for attempt in range(5):
+    for attempt in range(12):
         try:
             socket.getaddrinfo("api.openai.com", 443)
             return
         except socket.gaierror as exc:
             last_error = exc
-            time.sleep(1.5 * (attempt + 1))
+            time.sleep(min(2.0 * (attempt + 1), 10.0))
 
     raise RuntimeError(
         "Cannot resolve api.openai.com after several retries (DNS/network error). "
-        "In WSL, check /etc/resolv.conf or run: wsl --shutdown, then reopen WSL."
+        "In WSL, check /etc/resolv.conf or run: wsl --shutdown, then reopen WSL. "
+        "Inside kind, ensure CoreDNS is Ready and the node has egress DNS."
     ) from last_error
 
 

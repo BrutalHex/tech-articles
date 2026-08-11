@@ -1,0 +1,13 @@
+# Pre-warmed sandboxes claimed by the app for safe code execution.
+# replicas=1 keeps the POC minimal while still demonstrating warm-node adoption.
+apiVersion: extensions.agents.x-k8s.io/v1beta1
+kind: SandboxWarmPool
+metadata:
+  name: python-sandbox-warmpool
+  labels:
+    app.kubernetes.io/name: python-sandbox-warmpool
+    app.kubernetes.io/part-of: agentic-chain
+spec:
+  replicas: 1
+  sandboxTemplateRef:
+    name: python-runtime-template

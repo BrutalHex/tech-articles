@@ -69,6 +69,15 @@ class ProgressDisplay:
                 f"\n[bold magenta]▶ {payload['specialist'].upper()}[/bold magenta] "
                 f"[dim]({payload['subtask']})[/dim]"
             )
+        elif event == "tool_start":
+            source = payload.get("source", "agent")
+            args = payload.get("args", {}) or {}
+            query = args.get("query") or args.get("code", "")
+            console.print(
+                f"  [yellow]⚙ {payload['tool']}[/yellow] "
+                f"[dim]({source}) running…[/dim]"
+                + (f" {query!r}" if query else "")
+            )
         elif event == "tool_call":
             source = payload.get("source", "agent")
             source_labels = {
@@ -80,7 +89,7 @@ class ProgressDisplay:
             args = payload.get("args", {})
             query = args.get("query") or args.get("code", "")
             console.print(
-                f"  [yellow]⚙ {payload['tool']}[/yellow] "
+                f"  [yellow]✓ {payload['tool']}[/yellow] "
                 f"[dim]({source_label})[/dim]"
                 + (f" query={query!r}" if query else "")
             )
