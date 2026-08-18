@@ -1,0 +1,160 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agentic-chain-app
+  labels:
+    app: agentic-chain-app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: agentic-chain-app
+  template:
+    metadata:
+      labels:
+        app: agentic-chain-app
+    spec:
+      serviceAccountName: agentic-chain-app
+      # Wait for Chroma, then seed collections before the UI serves traffic.
+      initContainers:
+        - name: wait-chroma
+          image: agentic-chain-ui:v2026.08.01
+          imagePullPolicy: IfNotPresent
+          command:
+            - python
+            - -c
+            - |
+              import socket, sys, time
+              host, port = "chroma", 8000
+              for i in range(60):
+                  try:
+                      with socket.create_connection((host, port), timeout=2):
+                          print(f"chroma ready at {host}:{port}")
+                          sys.exit(0)
+                  except OSError as exc:
+                      print(f"waiting for chroma ({i+1}/60): {exc}")
+                      time.sleep(2)
+              raise SystemExit("chroma not ready")
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 50m
+              memory: 32Mi
+        - name: seed-chroma
+          image: agentic-chain-ui:v2026.08.01
+          imagePullPolicy: IfNotPresent
+          command: ["python", "seed_chroma.py"]
+          env:
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: agentic-chain-secrets
+                  key: OPENAI_API_KEY
+            - name: CHROMA_HOST
+              value: chroma
+            - name: CHROMA_PORT
+              value: "8000"
+            - name: ENABLE_LANGSMITH_TRACING
+              value: "false"
+          resources:
+            requests:
+              cpu: 25m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 192Mi
+      containers:
+        - name: app
+          image: agentic-chain-ui:v2026.08.01
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8000
+          env:
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: agentic-chain-secrets
+                  key: OPENAI_API_KEY
+            - name: LANGSMITH_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: agentic-chain-secrets
+                  key: LANGSMITH_API_KEY
+                  optional: true
+            - name: LANGSMITH_ENDPOINT
+              valueFrom:
+                secretKeyRef:
+                  name: agentic-chain-secrets
+                  key: LANGSMITH_ENDPOINT
+                  optional: true
+            - name: ENABLE_LANGSMITH_TRACING
+              value: "false"
+            - name: CHROMA_HOST
+              value: chroma
+            - name: CHROMA_PORT
+              value: "8000"
+            - name: CHECKPOINTS_DB_URI
+              value: postgresql://langgraph:langgraph@postgres:5432/langgraph
+            - name: SANDBOX_BACKEND
+              value: agent-sandbox
+            - name: SANDBOX_CONNECTION_MODE
+              value: in-cluster
+            - name: SANDBOX_WARMPOOL
+              value: python-sandbox-warmpool
+            - name: SANDBOX_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            # Short TTL keeps orphan claims from pinning sandbox pods on small WSL hosts.
+            - name: SANDBOX_SHUTDOWN_AFTER_SECONDS
+              value: "900"
+            - name: CHAINLIT_HOST
+              value: "0.0.0.0"
+            - name: CHAINLIT_PORT
+              value: "8000"
+            # Belt-and-suspenders with image PYTHONPATH: Chainlit may chdir.
+            - name: PYTHONPATH
+              value: "/app"
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 24
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 6
+          resources:
+            requests:
+              cpu: 40m
+              memory: 128Mi
+            limits:
+              cpu: 300m
+              memory: 256Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: agentic-chain-app
+  labels:
+    app: agentic-chain-app
+spec:
+  type: NodePort
+  selector:
+    app: agentic-chain-app
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      # Fixed NodePort for POC; kind-config extraPortMappings maps host:30080 → this.
+      nodePort: 30080

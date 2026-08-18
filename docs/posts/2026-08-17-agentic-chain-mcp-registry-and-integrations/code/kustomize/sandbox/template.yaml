@@ -1,0 +1,90 @@
+# Secure Python runtime template used by the warm pool.
+# Claims adopt pre-warmed sandboxes from SandboxWarmPool for low-latency code execution.
+# Executed scripts are written under /app/history so code-execution history can be listed
+# via the agent-sandbox filesystem API (sandbox.files.list("history")).
+#
+# Isolation: runtimeClassName=gvisor (runsc). gVisor is supported on AWS EKS when
+# worker nodes have runsc + containerd-shim-runsc-v1. If a node pool only has Kata,
+# change runtimeClassName to "kata" (RuntimeClass is defined under runtime-isolation/).
+apiVersion: extensions.agents.x-k8s.io/v1beta1
+kind: SandboxTemplate
+metadata:
+  name: python-runtime-template
+  labels:
+    app.kubernetes.io/name: python-runtime-template
+    app.kubernetes.io/part-of: agentic-chain
+    sandbox.agents.x-k8s.io/isolation: gvisor
+spec:
+  # Reject claim-time env / volume overrides so warm-pool sandboxes stay on the fast path
+  # and stay consistent with this hardened template.
+  envVarsInjectionPolicy: Disallowed
+  volumeClaimTemplatesPolicy: Disallowed
+
+  # Per-sandbox headless Service for stable in-cluster DNS (used by SandboxInClusterConnectionConfig).
+  service: true
+
+  # Kind/runc POC: keep Unmanaged if the controller network-policy plugin is unavailable.
+  networkPolicyManagement: Unmanaged
+
+  # History is stored in the container filesystem for the claim lifetime (minimal POC).
+  # For durable history across pod restarts, add volumeClaimTemplates + mount /app/history.
+  podTemplate:
+    metadata:
+      labels:
+        app: python-runtime-sandbox
+        sandbox.agents.x-k8s.io/purpose: code-interpreter
+        sandbox.agents.x-k8s.io/isolation: gvisor
+    spec:
+      automountServiceAccountToken: false
+      # Strongest practical isolation for untrusted agent code (EKS + kind with runsc).
+      # Handler "runsc" is provided by RuntimeClass/gvisor (see runtime-isolation/).
+      runtimeClassName: gvisor
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: python-runtime
+          image: registry.k8s.io/agent-sandbox/python-runtime-sandbox:v0.5.4
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: runtime
+              containerPort: 8888
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            requests:
+              cpu: 25m
+              memory: 64Mi
+              ephemeral-storage: 32Mi
+            limits:
+              cpu: 150m
+              memory: 160Mi
+              ephemeral-storage: 96Mi
+          readinessProbe:
+            httpGet:
+              path: /
+              port: runtime
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 36
+          livenessProbe:
+            httpGet:
+              path: /
+              port: runtime
+            initialDelaySeconds: 20
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 6
+      restartPolicy: OnFailure

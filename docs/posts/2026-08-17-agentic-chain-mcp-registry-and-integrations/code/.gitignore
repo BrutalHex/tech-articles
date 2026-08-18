@@ -1,0 +1,4 @@
+bin/
+.docker-build/
+.chainlit/
+kustomize/kind-config.generated.yaml

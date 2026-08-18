@@ -1,0 +1,9 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Namespace is also set by the stack overlay; kept here for staged `make apply`.
+namespace: agentic-chain
+
+resources:
+  - template.yaml
+  - warmpool.yaml

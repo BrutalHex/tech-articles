@@ -1,0 +1,6 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Cluster-scoped RuntimeClasses (must NOT set namespace).
+resources:
+  - runtimeclass.yaml
