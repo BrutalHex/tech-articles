@@ -6,4 +6,5 @@ namespace: agentic-chain
 
 resources:
   - postgres.yaml
+  - postgres-initdb.yaml
   - chroma.yaml

@@ -1,18 +1,18 @@
+---
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: agentic-chain-app
+  name: agent-sandbox-mcp
   labels:
-    app: agentic-chain-app
+    app: agent-sandbox-mcp
 ---
-# Permissions required to inspect claims/sandboxes/pods (kept for the app
-# ServiceAccount). Code execution itself goes through agent-sandbox-mcp.
+# Same claim/sandbox/pod verbs the Python SDK needs (in-cluster connection).
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
-  name: agentic-chain-sandbox-client
+  name: agent-sandbox-mcp
   labels:
-    app: agentic-chain-app
+    app: agent-sandbox-mcp
 rules:
   - apiGroups: ["extensions.agents.x-k8s.io"]
     resources: ["sandboxclaims"]
@@ -33,13 +33,13 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: agentic-chain-sandbox-client
+  name: agent-sandbox-mcp
   labels:
-    app: agentic-chain-app
+    app: agent-sandbox-mcp
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
-  name: agentic-chain-sandbox-client
+  name: agent-sandbox-mcp
 subjects:
   - kind: ServiceAccount
-    name: agentic-chain-app
+    name: agent-sandbox-mcp

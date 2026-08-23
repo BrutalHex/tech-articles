@@ -1,0 +1,13 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.modelcontextprotocol.anonymous/agent-sandbox",
+  "title": "Agent Sandbox",
+  "description": "Official Agent Sandbox MCP (gVisor warm-pool code execution).",
+  "version": "1.0.0",
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://agent-sandbox-mcp.agentic-chain.svc.cluster.local:8000/mcp"
+    }
+  ]
+}

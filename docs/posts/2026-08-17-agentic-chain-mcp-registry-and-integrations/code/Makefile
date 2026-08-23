@@ -3,7 +3,8 @@
 .PHONY: help tools \
 	install-curl install-kind install-kubectl install-kustomize install-gvisor \
 	setup-kind delete-kind \
-	docker-config docker-build docker-test docker-push load-kind \
+	docker-config docker-build docker-build-sandbox-mcp docker-build-fetch-mcp \
+	docker-test docker-push load-kind \
 	kustomize-build secret apply deploy wait-ready verify-isolation \
 	clean-all undeploy logs test
 
@@ -26,6 +27,11 @@ IMAGE ?= $(IMAGE_NAME):$(IMAGE_TAG)
 # Optional registry prefix for docker-push, e.g. docker.io/myuser or ghcr.io/org
 REGISTRY ?=
 FULL_IMAGE ?= $(if $(REGISTRY),$(REGISTRY)/$(IMAGE),$(IMAGE))
+
+SANDBOX_MCP_UPSTREAM ?= k8s-agent-sandbox-mcp-upstream:$(AGENT_SANDBOX_VERSION)
+SANDBOX_MCP_IMAGE ?= k8s-agent-sandbox-mcp:$(AGENT_SANDBOX_VERSION)
+FETCH_MCP_IMAGE ?= agentic-chain-mcp-fetch:$(IMAGE_TAG)
+MCP_REGISTRY_IMAGE ?= ghcr.io/modelcontextprotocol/registry:latest
 
 # Paths
 OS_RAW := $(shell uname -s | tr '[:upper:]' '[:lower:]')
@@ -181,9 +187,10 @@ delete-kind: tools ## Delete KIND cluster (CLUSTER_NAME=kind)
 	fi
 
 ##@ Docker image
-# WSL/Docker Desktop often breaks with credsStore=desktop.exe; use a clean config for builds.
+# WSL/Docker Desktop often breaks with credsStore=desktop.exe; use a clean config for
+# docker:27-cli builds only. Do NOT export DOCKER_CONFIG globally — host docker/buildx
+# then cannot write .docker-build/buildx/.lock (kind flatten failed that way).
 DOCKER_CONFIG_DIR := $(CURDIR)/.docker-build
-export DOCKER_CONFIG := $(DOCKER_CONFIG_DIR)
 # Single-platform, no attestations — kind load fails on multi-arch index digests.
 DOCKER_BUILD_FLAGS ?= --platform=linux/amd64 --provenance=false --sbom=false
 # Build inside a Docker CLI container so WSL host Docker config quirks stay out of band.
@@ -210,11 +217,52 @@ docker-build: docker-config ## Build the Chainlit app image in a container (tag=
 		echo "Also tagged $(FULL_IMAGE)"; \
 	fi
 
-docker-test: docker-build ## Smoke-test the image before push/load
+docker-build-sandbox-mcp: docker-config install-curl ## Build official agent-sandbox MCP image + /readyz wrapper
+	@echo "Fetching agent-sandbox $(AGENT_SANDBOX_VERSION) MCP server sources"
+	@rm -rf $(CURDIR)/.cache/agent-sandbox
+	@mkdir -p $(CURDIR)/.cache
+	@$(CURL) -fsSL -o $(CURDIR)/.cache/agent-sandbox.tar.gz \
+		https://github.com/kubernetes-sigs/agent-sandbox/archive/refs/tags/$(AGENT_SANDBOX_VERSION).tar.gz
+	@tar -xzf $(CURDIR)/.cache/agent-sandbox.tar.gz -C $(CURDIR)/.cache
+	@src="$(CURDIR)/.cache/agent-sandbox-$(AGENT_SANDBOX_VERSION:v%=%)"; \
+	if [ ! -d "$$src/clients/integrations/mcp-server" ]; then \
+		echo "ERROR: mcp-server not found in $$src"; exit 1; \
+	fi; \
+	echo "Building $(SANDBOX_MCP_UPSTREAM) via $(DOCKER_BUILD_CONTAINER)"; \
+	docker run --rm \
+		-v /var/run/docker.sock:/var/run/docker.sock \
+		-v "$$src/clients/integrations/mcp-server:/src:ro" \
+		-v "$(DOCKER_CONFIG_DIR):/root/.docker" \
+		-e DOCKER_CONFIG=/root/.docker \
+		-w /src \
+		$(DOCKER_BUILD_CONTAINER) \
+		docker build $(DOCKER_BUILD_FLAGS) -t $(SANDBOX_MCP_UPSTREAM) .
+	@echo "Wrapping $(SANDBOX_MCP_IMAGE) with /healthz /readyz"
+	@docker run --rm \
+		-v /var/run/docker.sock:/var/run/docker.sock \
+		-v "$(CURDIR)/kustomize/agent-sandbox-mcp:/src:ro" \
+		-v "$(DOCKER_CONFIG_DIR):/root/.docker" \
+		-e DOCKER_CONFIG=/root/.docker \
+		-w /src \
+		$(DOCKER_BUILD_CONTAINER) \
+		docker build $(DOCKER_BUILD_FLAGS) -t $(SANDBOX_MCP_IMAGE) .
+
+docker-build-fetch-mcp: docker-config ## Build official mcp-server-fetch image + HTTP probes
+	@echo "Building $(FETCH_MCP_IMAGE) via $(DOCKER_BUILD_CONTAINER)"
+	@docker run --rm \
+		-v /var/run/docker.sock:/var/run/docker.sock \
+		-v "$(CURDIR)/kustomize/mcp-fetch:/src:ro" \
+		-v "$(DOCKER_CONFIG_DIR):/root/.docker" \
+		-e DOCKER_CONFIG=/root/.docker \
+		-w /src \
+		$(DOCKER_BUILD_CONTAINER) \
+		docker build $(DOCKER_BUILD_FLAGS) -t $(FETCH_MCP_IMAGE) .
+
+docker-test: docker-build ## Smoke-test the app image before push/load
 	@echo "Smoke-testing $(IMAGE)..."
 	@docker run --rm $(IMAGE) python -c "import chainlit, tools, graph, seed_chroma; from tools import TOOL_REGISTRY; print('imports-ok', sorted(TOOL_REGISTRY))"
 	@docker run --rm $(IMAGE) chainlit --help >/dev/null
-	@docker run --rm --entrypoint python $(IMAGE) -c "from tools.code_interpreter import ensure_stdout_visibility; s=ensure_stdout_visibility('2+2'); assert 'print' in s; print('stdout-prep-ok')"
+	@docker run --rm --entrypoint python $(IMAGE) -c "from tools import fetch_registry_servers, classify_mcp_kind; assert classify_mcp_kind('agent-sandbox') == 'sandbox-mcp'; print('mcp-client-ok')"
 	@echo "Image smoke tests passed."
 
 docker-push: docker-test ## Push image to REGISTRY (required) after smoke tests
@@ -226,10 +274,18 @@ docker-push: docker-test ## Push image to REGISTRY (required) after smoke tests
 	docker tag $(IMAGE) $(FULL_IMAGE)
 	docker push $(FULL_IMAGE)
 
-load-kind: docker-test setup-kind ## Build, test, and load app + runtime images into KIND
+load-kind: docker-test docker-build-sandbox-mcp docker-build-fetch-mcp setup-kind ## Build, test, and load app + runtime images into KIND
+	@echo "Pulling registry image (serial, low-memory)"
+	@if ! docker image inspect $(MCP_REGISTRY_IMAGE) >/dev/null 2>&1; then \
+		echo "Pulling $(MCP_REGISTRY_IMAGE)"; \
+		docker pull --platform=linux/amd64 $(MCP_REGISTRY_IMAGE); \
+	fi
 	@echo "Loading images into kind (serial, low-memory; direct then flatten)"
 	@for img in \
 		"$(IMAGE)" \
+		"$(SANDBOX_MCP_IMAGE)" \
+		"$(FETCH_MCP_IMAGE)" \
+		"$(MCP_REGISTRY_IMAGE)" \
 		"registry.k8s.io/agent-sandbox/python-runtime-sandbox:$(AGENT_SANDBOX_VERSION)" \
 		"registry.k8s.io/agent-sandbox/agent-sandbox-controller:$(AGENT_SANDBOX_VERSION)" \
 		"postgres:16-alpine"; do \
@@ -241,16 +297,15 @@ load-kind: docker-test setup-kind ## Build, test, and load app + runtime images 
 			flat="kind-flat-$$(echo "$$img" | tr '/:' '--')"; \
 			tmp=$$(mktemp -d); \
 			printf 'FROM %s\n' "$$img" > "$$tmp/Dockerfile"; \
-			docker build $(DOCKER_BUILD_FLAGS) -t "$$flat" "$$tmp"; \
+			if ! docker build $(DOCKER_BUILD_FLAGS) -t "$$flat" "$$tmp"; then \
+				rm -rf "$$tmp"; echo "ERROR: flatten build failed for $$img"; exit 1; \
+			fi; \
 			rm -rf "$$tmp"; \
 			$(KIND) load docker-image "$$flat"; \
 			docker exec kind-control-plane ctr -n k8s.io images tag \
 				"docker.io/library/$$flat:latest" "$$img" >/dev/null 2>&1 || true; \
-			case "$$img" in \
-				*/*) ;; \
-				*) docker exec kind-control-plane ctr -n k8s.io images tag \
-					"docker.io/library/$$flat:latest" "docker.io/library/$$img" >/dev/null 2>&1 || true ;; \
-			esac; \
+			docker exec kind-control-plane ctr -n k8s.io images tag \
+				"docker.io/library/$$flat:latest" "docker.io/library/$$img" >/dev/null 2>&1 || true; \
 			echo "Flattened load ok: $$img"; \
 		fi; \
 		sleep 2; \
@@ -297,8 +352,14 @@ deploy: load-kind apply wait-ready ## Full POC path: kind + image + apply + wait
 wait-ready: tools ## Wait for core workloads to become ready
 	@echo "Waiting for agent-sandbox controller..."
 	@$(KUBECTL) -n agent-sandbox-system wait --for=condition=Available deploy --all --timeout=300s || true
-	@echo "Waiting for postgres/chroma/app..."
+	@echo "Waiting for postgres/chroma/registry/mcp/app..."
 	@$(KUBECTL) -n agentic-chain wait --for=condition=Available deploy/postgres deploy/chroma --timeout=300s
+	@$(KUBECTL) -n agentic-chain wait --for=condition=Available \
+		deploy/mcp-registry deploy/mcp-fetch deploy/agent-sandbox-mcp --timeout=300s || \
+		($(KUBECTL) -n agentic-chain get pods -o wide; \
+		 $(KUBECTL) -n agentic-chain describe deploy/agent-sandbox-mcp; \
+		 $(KUBECTL) -n agentic-chain logs deploy/agent-sandbox-mcp --tail=80 || true; \
+		 exit 1)
 	@$(KUBECTL) -n agentic-chain wait --for=condition=Available deploy/agentic-chain-app --timeout=600s || \
 		($(KUBECTL) -n agentic-chain describe deploy/agentic-chain-app; \
 		 $(KUBECTL) -n agentic-chain get pods -o wide; \
@@ -330,7 +391,14 @@ verify-isolation: tools ## Confirm RuntimeClass/gvisor and sandbox pods use it
 		$(KUBECTL) -n agentic-chain get pods -l app=python-runtime-sandbox -o yaml | head -80; \
 		exit 1; \
 	fi; \
-	echo "gVisor isolation OK."
+	echo "gVisor isolation OK."; \
+	echo "=== Agent Sandbox MCP /readyz ==="; \
+	$(KUBECTL) -n agentic-chain exec deploy/agent-sandbox-mcp -c mcp -- \
+		python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/readyz').read()" >/dev/null; \
+	echo "agent-sandbox-mcp /readyz 200"; \
+	echo "=== MCP registry servers ==="; \
+	$(KUBECTL) -n agentic-chain exec deploy/agent-sandbox-mcp -c mcp -- \
+		python -c "import urllib.request; print(urllib.request.urlopen('http://mcp-registry:8080/v0.1/servers').read().decode()[:800])" || true
 
 clean-all: delete-kind ## Delete kind cluster and generated kind config
 	@rm -f $(KIND_CONFIG)

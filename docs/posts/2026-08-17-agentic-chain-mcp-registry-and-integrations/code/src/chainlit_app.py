@@ -4,20 +4,15 @@ Keeps main.py (CLI) unchanged. Reuses GraphConfig + graph_session and maps
 on_event payloads into nested cl.Steps. Uses cl.context.session.id as the
 LangGraph thread_id so chat sessions get durable checkpoints.
 
-Progress is streamed live via a thread-safe queue. Code-execution history is
-available as a dedicated button (and short-circuited chat phrases) so users can
-download .py + .meta.json + .result.json without relying on the LLM.
+Progress is streamed live via a thread-safe queue.
 """
 
 from __future__ import annotations
 
 import asyncio
 import queue
-import re
 import sys
-import tempfile
 import threading
-import uuid
 from pathlib import Path
 from typing import Any
 
@@ -32,28 +27,12 @@ import env_setup  # noqa: F401 — load .env / endpoints first
 from config import GraphConfig, graph_session
 from env_setup import CHECKPOINTS_DB_URI, CHROMA_HOST, CHROMA_PORT
 from openai_config import create_chat_llm, create_embeddings, verify_openai_connectivity
-from tools.sandbox import fetch_code_execution_history
 
 # Built once per process; LLM clients are thread-safe enough for POC use.
 _LLM = None
 _EMBEDDINGS = None
 
 _SENTINEL = object()
-
-# Chat phrases that should open history directly (no multi-agent graph).
-_HISTORY_REQUEST = re.compile(
-    r"(?i)\b("
-    r"code\s*execution\s*history|"
-    r"execution\s*history|"
-    r"sandbox\s*history|"
-    r"what\s+code\s+ran|"
-    r"list\s+(the\s+)?history|"
-    r"show\s+(me\s+)?(the\s+)?history|"
-    r"audit\s+(the\s+)?code"
-    r")\b"
-)
-
-_HISTORY_ACTION_NAME = "show_code_history"
 
 
 def _llm():
@@ -70,21 +49,10 @@ def _embeddings():
     return _EMBEDDINGS
 
 
-def _history_actions() -> list[cl.Action]:
-    return [
-        cl.Action(
-            name=_HISTORY_ACTION_NAME,
-            payload={"limit": 20},
-            label="📜 Code execution history",
-            tooltip="List sandbox scripts and download .py + .meta.json + .result.json",
-        )
-    ]
-
-
 def _fmt_args(args: dict | None, limit: int = 240) -> str:
     if not args:
         return ""
-    for key in ("code", "query", "limit"):
+    for key in ("code", "query", "command", "path", "url", "content"):
         if key in args and args[key] is not None:
             text = str(args[key]).strip()
             if len(text) > limit:
@@ -94,139 +62,6 @@ def _fmt_args(args: dict | None, limit: int = 240) -> str:
     if len(text) > limit:
         text = text[: limit - 3] + "..."
     return text
-
-
-def _to_bytes(value: Any) -> bytes:
-    if value is None:
-        return b"\n"
-    if isinstance(value, bytes):
-        return value if value else b"\n"
-    text = str(value)
-    return text.encode("utf-8") if text else b"\n"
-
-
-def _file_element(name: str, body: bytes, mime: str) -> cl.File:
-    """
-    Build a downloadable Chainlit File with a real on-disk path.
-
-    Using path= (not only content=) is more reliable for Chainlit's
-    persist_file → chainlitKey → frontend URL pipeline. Empty content is
-    falsy and would yield a null download URL (startsWith on null in UI).
-    """
-    safe_name = Path(str(name)).name or "file.bin"
-    # Unique temp file so concurrent history views do not clobber each other.
-    tmp_dir = Path(tempfile.gettempdir()) / "agentic-chain-history"
-    tmp_dir.mkdir(parents=True, exist_ok=True)
-    tmp_path = tmp_dir / f"{uuid.uuid4().hex}_{safe_name}"
-    tmp_path.write_bytes(body if body else b"\n")
-    return cl.File(
-        name=safe_name,
-        path=str(tmp_path),
-        mime=mime,
-        display="inline",
-    )
-
-
-async def send_code_execution_history(limit: int = 20) -> None:
-    """Fetch sandbox history and post it as a vertical list of messages.
-
-    One File per message (Chainlit lays out multiple elements in a row).
-    Markdown only — no HTML <details>, which shows up as raw tags / mangles
-    the code preview when clicked.
-    """
-    loading = cl.Message(content="Loading code execution history from agent-sandbox…")
-    await loading.send()
-
-    def _fetch() -> dict:
-        return fetch_code_execution_history(limit=limit)
-
-    try:
-        data = await asyncio.to_thread(_fetch)
-    except Exception as exc:
-        loading.content = f"**Error loading history:** {exc}"
-        loading.actions = _history_actions()
-        await loading.update()
-        return
-
-    if not data.get("ok"):
-        loading.content = data.get("error") or "Could not load code execution history."
-        loading.actions = _history_actions()
-        await loading.update()
-        return
-
-    entries = data.get("entries") or []
-    if not entries:
-        loading.content = (
-            "No code-execution history found yet.\n\n"
-            "Run some code first (e.g. *compute 2+2 with the code interpreter*), "
-            "then open history again."
-        )
-        loading.actions = _history_actions()
-        await loading.update()
-        return
-
-    loading.content = (
-        f"**Code execution history** — {data.get('count', 0)} script(s)\n\n"
-        f"- claim: `{data.get('claim')}`\n"
-        f"- sandbox: `{data.get('sandbox_id')}`\n\n"
-        "Each entry is listed below (code, meta, result), with download links."
-    )
-    await loading.update()
-
-    # Vertical stack: one message per downloadable file (avoids horizontal chips).
-    for i, entry in enumerate(entries, start=1):
-        name = str(entry.get("name") or f"script_{i}.py")
-        stem = Path(name).stem
-        meta_name = str(entry.get("meta_name") or f"{stem}.meta.json")
-        result_name = str(entry.get("result_name") or f"{stem}.result.json")
-        code = entry.get("code") if entry.get("code") is not None else ""
-        meta = entry.get("meta") if entry.get("meta") is not None else ""
-        result = entry.get("result") if entry.get("result") is not None else ""
-        code_text = str(code).rstrip() or "(empty)"
-        meta_text = str(meta).rstrip() or "{}"
-        result_text = str(result).rstrip() or "{}"
-
-        # Code message + single .py file element
-        await cl.Message(
-            content=(
-                f"**{i}. Source** `{name}`\n\n"
-                f"```python\n{code_text}\n```"
-            ),
-            elements=[
-                _file_element(name, _to_bytes(code), "text/x-python"),
-            ],
-        ).send()
-
-        # Meta message + single .meta.json file element (next row)
-        await cl.Message(
-            content=(
-                f"**{i}. Meta** `{meta_name}`\n\n"
-                f"```json\n{meta_text}\n```"
-            ),
-            elements=[
-                _file_element(meta_name, _to_bytes(meta or "{}"), "application/json"),
-            ],
-        ).send()
-
-        # Result message + single .result.json file element
-        await cl.Message(
-            content=(
-                f"**{i}. Result** `{result_name}`\n\n"
-                f"```json\n{result_text}\n```"
-            ),
-            elements=[
-                _file_element(
-                    result_name,
-                    _to_bytes(result or "{}"),
-                    "application/json",
-                ),
-            ],
-        ).send()
-
-    await cl.Message(
-        content="End of history.",
-        actions=_history_actions(),
-    ).send()
 
 
 class EventQueueBridge:
@@ -420,45 +255,19 @@ async def on_chat_start() -> None:
             "Multi-agent workflow ready.\n\n"
             f"Session thread: `{cl.context.session.id}`\n\n"
             "Ask a research/finance/legal/general question. "
-            "Code runs in Kubernetes **agent-sandbox** with **gVisor** "
-            "(`runtimeClassName: gvisor`) when enabled.\n\n"
-            "Use the **Code execution history** button to list scripts and download "
-            "`.py` + `.meta.json` + `.result.json` files (no LLM involved)."
+            "Specialists discover MCP tools from the in-cluster **MCP registry** "
+            "on every turn (`tools/list` on each published remote). "
+            "This POC publishes Agent Sandbox MCP (gVisor code execution) and "
+            "Fetch MCP (`@modelcontextprotocol/server-fetch`)."
         ),
-        actions=_history_actions(),
     ).send()
-
-
-@cl.action_callback(_HISTORY_ACTION_NAME)
-async def on_show_code_history(action: cl.Action) -> None:
-    limit = 20
-    payload = action.payload or {}
-    try:
-        limit = int(payload.get("limit") or 20)
-    except (TypeError, ValueError):
-        limit = 20
-    await send_code_execution_history(limit=limit)
-    # Chainlit requires acknowledging the action in some versions.
-    try:
-        await action.remove()
-    except Exception:
-        pass
 
 
 @cl.on_message
 async def on_message(message: cl.Message) -> None:
     task = (message.content or "").strip()
     if not task:
-        await cl.Message(
-            content="Please enter a non-empty task.",
-            actions=_history_actions(),
-        ).send()
-        return
-
-    # Bypass the multi-agent graph for explicit history requests so the UI
-    # never invents a "business analysis" of history.
-    if _HISTORY_REQUEST.search(task):
-        await send_code_execution_history(limit=20)
+        await cl.Message(content="Please enter a non-empty task.").send()
         return
 
     thread_id = cl.user_session.get("thread_id") or cl.context.session.id
@@ -503,7 +312,6 @@ async def on_message(message: cl.Message) -> None:
 
     if error_box.get("error") is not None:
         status.content = f"**Error:** {error_box['error']}"
-        status.actions = _history_actions()
         await status.update()
         return
 
@@ -512,7 +320,7 @@ async def on_message(message: cl.Message) -> None:
 
     values = result_box.get("values") or {}
     answer = values.get("final_answer") or "No final answer generated."
-    await cl.Message(content=answer, actions=_history_actions()).send()
+    await cl.Message(content=answer).send()
 
     critique = values.get("critique")
     if critique and not values.get("needs_improvement"):

@@ -1,4 +1,5 @@
 import re
+from datetime import datetime
 from typing import Any, Callable, Dict, List
 
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
@@ -7,8 +8,27 @@ from pydantic import BaseModel, Field
 
 from specialists import MAX_TOOL_ROUNDS, SPECIALIST_PROMPTS, VALID_SPECIALIST_TYPES
 from state import OverallState
+from tools import (
+    StickyMCPSessions,
+    filter_sandbox_mcp_tools,
+    format_discovered_mcp_tools,
+    invoke_tool_sync,
+    looks_like_exec_result,
+)
 
 EventCallback = Callable[[str, dict], None] | None
+
+
+def current_date_instruction() -> str:
+    """Fresh calendar date for LLM instructions (not a training-cutoff year)."""
+    now = datetime.now().astimezone()
+    return (
+        f"Today's date is {now.strftime('%A, %d %B %Y')} "
+        f"({now.date().isoformat()}). "
+        "Interpret relative dates (today, yesterday, last night, this week, "
+        "last week) against this date. Do not treat a training-cutoff year "
+        "as today, and do not call a source from this year 'future' or invented."
+    )
 
 # Tasks that require real sandbox execution — specialists must not answer from memory.
 _CODE_EXEC_REQUEST = re.compile(
@@ -64,12 +84,19 @@ def _preview(text: str, limit: int = 160) -> str:
     return compact[: limit - 3] + "..."
 
 
-def _tool_source(tool_name: str) -> str:
-    if tool_name == "web_search":
-        return "web"
+def _tool_source(tool_name: str, tool: Any | None = None) -> str:
+    """Label a tool from live MCP metadata, not a hard-coded name map."""
+    if tool is not None:
+        meta = getattr(tool, "metadata", None) or {}
+        kind = meta.get("mcp_kind")
+        if kind:
+            return kind
+        server = meta.get("mcp_server")
+        if server:
+            return server
     if tool_name.endswith("_search"):
         return "internal docs"
-    return "agent"
+    return "mcp"
 
 
 def _run_tool(
@@ -77,8 +104,9 @@ def _run_tool(
     tool: Any,
     args: dict,
     on_event: EventCallback,
+    runtime: StickyMCPSessions | None = None,
 ) -> str:
-    source = _tool_source(tool_name)
+    source = _tool_source(tool_name, tool)
     _emit(
         on_event,
         "tool_start",
@@ -90,7 +118,7 @@ def _run_tool(
     )
     _emit(on_event, "working_start", {"message": f"Running {tool_name}..."})
     try:
-        result = str(tool.invoke(args))
+        result = invoke_tool_sync(tool, args, runtime=runtime)
     except Exception as exc:
         _emit(on_event, "working_done", {})
         _emit(
@@ -128,7 +156,8 @@ def _invoke_with_tools(
     tools_invoked: list[str] | None = None,
     tool_results: list[tuple[str, str]] | None = None,
     *,
-    stop_after_code_interpreter: bool = False,
+    stop_after_sandbox_exec: bool = False,
+    runtime: StickyMCPSessions | None = None,
 ) -> tuple[Any, list[str], list[tuple[str, str]]]:
     if tools_invoked is None:
         tools_invoked = []
@@ -146,7 +175,7 @@ def _invoke_with_tools(
             return response, tools_invoked, tool_results
 
         messages.append(response)
-        saw_successful_code = False
+        saw_successful_exec = False
         for tool_call in response.tool_calls:
             if isinstance(tool_call, dict):
                 name = tool_call["name"]
@@ -158,27 +187,22 @@ def _invoke_with_tools(
                 tool_call_id = tool_call.id
 
             tool = tools_by_name[name]
-            result = _run_tool(name, tool, args, on_event)
+            result = _run_tool(name, tool, args, on_event, runtime=runtime)
             tools_invoked.append(name)
             tool_results.append((name, result))
             messages.append(
                 ToolMessage(content=result, tool_call_id=tool_call_id)
             )
             if (
-                stop_after_code_interpreter
-                and name == "code_interpreter"
-                and "Error executing code" not in result
+                stop_after_sandbox_exec
+                and looks_like_exec_result(result)
+                and not _sandbox_exec_failed(result)
             ):
-                saw_successful_code = True
+                saw_successful_exec = True
 
-        # Pure execute tasks: one successful sandbox run is enough — do not let
-        # the model re-run, call history, or fan out extra tool rounds.
-        if saw_successful_code:
-            # Do not ask the model to rephrase stdout (it invents PIDs). Callers
-            # pin the specialist output to the last code_interpreter payload.
+        if saw_successful_exec:
             return response, tools_invoked, tool_results
 
-    # Agentic RAG safety: stop after MAX_TOOL_ROUNDS even if the model keeps calling tools.
     _emit(on_event, "working_start", {"message": "Specialist thinking..."})
     try:
         response = bound_llm.invoke(messages)
@@ -187,42 +211,51 @@ def _invoke_with_tools(
     return response, tools_invoked, tool_results
 
 
-def _last_tool_result(
+def _last_sandbox_exec_result(
     tool_results: list[tuple[str, str]],
-    tool_name: str,
 ) -> str | None:
     last: str | None = None
-    for name, result in tool_results:
-        if name == tool_name:
+    for _name, result in tool_results:
+        if looks_like_exec_result(result):
             last = result
     return last
 
 
+def _sandbox_exec_ran(tool_results: list[tuple[str, str]]) -> bool:
+    return any(looks_like_exec_result(result) for _name, result in tool_results)
+
+
+def _sandbox_exec_failed(result: str) -> bool:
+    text = (result or "").lower()
+    if "error" in text and "exit" in text:
+        return True
+    if re.search(r'"exit_code"\s*:\s*(?!0\b)\d+', result or ""):
+        return True
+    return False
+
+
 def _verbatim_code_specialist_output(tool_result: str) -> str:
-    """Specialist payload that preserves exact sandbox stdout (matches .result.json)."""
+    """Specialist payload that preserves exact sandbox stdout."""
     return (
-        "### code_interpreter result (verbatim — source of truth; "
-        "matches history/*.result.json stdout)\n\n"
+        "### sandbox execution result (verbatim — source of truth)\n\n"
         f"{(tool_result or '').rstrip()}\n"
     )
 
 
 def _extract_verbatim_code_blocks(text: str) -> list[str]:
-    """Pull pinned code_interpreter sections (or raw [agent-sandbox] blocks)."""
     if not text:
         return []
     marked = re.findall(
-        r"(### code_interpreter result \(verbatim[^\n]*\)\s*\n+.*?)(?=\n### |\Z)",
+        r"(### sandbox execution result \(verbatim[^\n]*\)\s*\n+.*?)(?=\n### |\Z)",
         text,
         flags=re.S,
     )
     if marked:
         return [m.strip() for m in marked if m.strip()]
-    # Fallback: header written by tools.code_interpreter
     raw = re.findall(
-        r"(\[agent-sandbox[^\]]+\].*?)(?=\n\[agent-sandbox|\n### |\Z)",
+        r"((?:stdout|exit_code).{0,400})",
         text,
-        flags=re.S,
+        flags=re.S | re.I,
     )
     return [m.strip() for m in raw if m.strip()]
 
@@ -235,10 +268,9 @@ def _clamp_code_plan(task: str, plan: list[str], specialists: list[str]) -> tupl
         return plan, specialists
     if len(specialists) <= 1 and len(plan) <= 1:
         return plan, specialists
-    # One execute task must not become N parallel "general" subtasks.
     first = (plan[0] if plan else "").strip() or (
-        "Call code_interpreter once with the user's Python and report the sandbox "
-        "stdout/stderr exactly. Do not call code_execution_history unless asked."
+        "Use bound sandbox MCP tools only: create a sandbox, write/upload "
+        "the user's Python, execute it, then report stdout/stderr exactly."
     )
     return [first], ["general"]
 
@@ -261,12 +293,12 @@ Routing hints:
 - Product performance, growth drivers → research
 - Regulations, compliance, legal risk → legal only when the task is about law or compliance
 - Sports, match results, news, weather, current events, "last night", "today" → general ONLY (1 subtask, 1 specialist)
-- Code execution, run/execute/write Python, compute/calculate with code, code interpreter, get program output/result → general ONLY (exactly 1 subtask, 1 specialist). The specialist MUST call code_interpreter exactly once and report stdout; do not invent results; do NOT add a second subtask for history unless the user asked for history.
-- Code execution history, sandbox history, "what code ran", audit interpreter scripts → general ONLY (1 subtask). The specialist MUST call code_execution_history; do not route to research/finance/legal.
+- Code execution, run/execute/write Python, compute/calculate with code, get program output/result → general ONLY (exactly 1 subtask, 1 specialist). The specialist MUST use the bound sandbox MCP tools and report stdout; do not invent results.
 - Simple factual questions → general ONLY (1 subtask) — do NOT split into multiple research agents
 - Never use internal research/finance specialists for sports or unrelated current events
 - Prefer finance + research together only for company financial questions
-- Never invent 2–3 overlapping subtasks for the same code run (no "execute" + "run interpreter" + "check history")
+- Never invent 2–3 overlapping subtasks for the same code run
+- There is no local interpreter and no code-execution history tool
 
 Task: {task}{critique_section}"""
 
@@ -325,6 +357,27 @@ def _requires_code_execution(task: str, subtask: str) -> bool:
     return bool(_CODE_EXEC_REQUEST.search(blob))
 
 
+def _bind_specialist_tools(
+    config: dict,
+    mcp_tools: list,
+    *,
+    needs_code: bool,
+) -> tuple[Any, dict]:
+    """Bind only the MCP-derived tools allowed for this specialist/task."""
+    static = dict(config.get("static_tools") or {})
+
+    if needs_code:
+        # Code work: MCP sandbox tools only — no local interpreter, no bypass.
+        allowed = filter_sandbox_mcp_tools(mcp_tools)
+        tools = allowed
+    else:
+        tools = list(static.values()) + list(mcp_tools)
+
+    tools_by_name = {t.name: t for t in tools}
+    bound_llm = config["llm"].bind_tools(tools) if tools else config["llm"]
+    return bound_llm, tools_by_name
+
+
 def specialist_node(
     state: OverallState,
     specialist_config: dict,
@@ -342,10 +395,7 @@ def specialist_node(
     })
 
     config = specialist_config.get(specialist_type, specialist_config["general"])
-    system_prompt = SPECIALIST_PROMPTS[specialist_type]
-    tools_by_name = config["tools"]
-    has_code_tool = "code_interpreter" in tools_by_name
-    needs_code = has_code_tool and _requires_code_execution(task, subtask)
+    needs_code = _requires_code_execution(task, subtask)
 
     human_parts = [
         f"User question: {task}",
@@ -356,53 +406,72 @@ def specialist_node(
     if needs_code:
         human_parts.append(
             "REQUIRED: This request involves code or computation. "
-            "You MUST call the code_interpreter tool with Python code before answering. "
-            "Do not provide an artificial/mental result. Report only the tool output."
+            "All code execution must go through the bound sandbox MCP tools "
+            "in this turn's inventory. Never assume a local interpreter. "
+            "Omit warmpool and namespace; the sandbox MCP fills cluster "
+            "placement. Call get_sandbox_config only if you need to inspect "
+            "those values. "
+            "Sandbox working directory is /app. Use relative paths. "
+            "Follow the bound tool schemas: create a sandbox if needed, "
+            "write or upload the program, then run it. A successful write "
+            "is not the program result — keep calling bound tools until "
+            "one returns the program's stdout. Report only that output."
         )
 
-    messages = [
-        SystemMessage(content=system_prompt),
-        HumanMessage(content="\n\n".join(human_parts)),
-    ]
-
-    response, tools_invoked, tool_results = _invoke_with_tools(
-        config["llm"],
-        tools_by_name,
-        messages,
-        on_event=on_event,
-        stop_after_code_interpreter=needs_code,
-    )
-
-    # Hard guard: if the model answered without running code, force one more
-    # tool-using pass so sandbox execution is not skipped.
-    if needs_code and "code_interpreter" not in tools_invoked:
-        messages.append(response)
-        messages.append(
-            HumanMessage(
-                content=(
-                    "You answered without calling code_interpreter. That is invalid "
-                    "for this task. Call code_interpreter now with the Python code "
-                    "needed to produce the real result, then answer only from its output. "
-                    "Call it exactly once."
-                )
-            )
+    with StickyMCPSessions() as runtime:
+        bound_llm, tools_by_name = _bind_specialist_tools(
+            config, runtime.tools, needs_code=needs_code
         )
+        has_sandbox_tools = bool(
+            filter_sandbox_mcp_tools(list(tools_by_name.values()))
+        )
+        inventory = format_discovered_mcp_tools(list(tools_by_name.values()))
+        system_prompt = (
+            f"{current_date_instruction()}\n\n"
+            f"{SPECIALIST_PROMPTS[specialist_type]}\n\n{inventory}"
+        )
+        messages = [
+            SystemMessage(content=system_prompt),
+            HumanMessage(content="\n\n".join(human_parts)),
+        ]
+
         response, tools_invoked, tool_results = _invoke_with_tools(
-            config["llm"],
+            bound_llm,
             tools_by_name,
             messages,
             on_event=on_event,
-            tools_invoked=tools_invoked,
-            tool_results=tool_results,
-            stop_after_code_interpreter=True,
+            stop_after_sandbox_exec=needs_code,
+            runtime=runtime,
         )
 
-    # Pin code tasks to the real tool payload so the model cannot rewrite PIDs/stdout.
+        if needs_code and has_sandbox_tools and not _sandbox_exec_ran(tool_results):
+            messages.append(response)
+            messages.append(
+                HumanMessage(
+                    content=(
+                        "You answered without running the program through the bound "
+                        "sandbox MCP tools. Writing the file is not enough. Create a "
+                        "sandbox if needed, write or upload the program, then run it "
+                        "and answer only from that stdout. There is no local interpreter."
+                    )
+                )
+            )
+            response, tools_invoked, tool_results = _invoke_with_tools(
+                bound_llm,
+                tools_by_name,
+                messages,
+                on_event=on_event,
+                tools_invoked=tools_invoked,
+                tool_results=tool_results,
+                stop_after_sandbox_exec=True,
+                runtime=runtime,
+            )
+
     output = response.content if hasattr(response, "content") else str(response)
     if needs_code:
-        last_code = _last_tool_result(tool_results, "code_interpreter")
-        if last_code:
-            output = _verbatim_code_specialist_output(last_code)
+        last_exec = _last_sandbox_exec_result(tool_results)
+        if last_exec:
+            output = _verbatim_code_specialist_output(last_exec)
 
     _emit(on_event, "specialist_done", {
         "specialist": specialist_type,
@@ -452,9 +521,11 @@ def aggregator_node(state: OverallState, on_event: EventCallback = None) -> Dict
 
 def _has_sandbox_evidence(*texts: str) -> bool:
     blob = "\n".join(t or "" for t in texts)
-    return ("[agent-sandbox" in blob) or (
-        "history/" in blob and "sandbox=" in blob
-    )
+    if "### sandbox execution result" in blob:
+        return True
+    if looks_like_exec_result(blob):
+        return True
+    return False
 
 
 def synthesizer_node(state: OverallState, llm: Any, on_event: EventCallback = None) -> Dict:
@@ -472,14 +543,11 @@ def synthesizer_node(state: OverallState, llm: Any, on_event: EventCallback = No
             )
         }
 
-    # Code tasks: never let the synthesizer rewrite sandbox stdout (PIDs, hostnames).
-    # Use the last pinned code_interpreter block — same bytes as .result.json.
     if _requires_code_execution(task, task):
         blocks = _extract_verbatim_code_blocks(combined)
         if blocks:
             final = (
-                "Sandbox execution output (verbatim from `code_interpreter`; "
-                "this is the same stdout stored in `history/*.result.json`):\n\n"
+                "Sandbox execution output (verbatim from MCP):\n\n"
                 f"{blocks[-1]}\n"
             )
             _emit(on_event, "synthesizer_done", {})
@@ -497,10 +565,9 @@ Rules:
 - For company metrics, prefer internal document figures. For sports/news/current events, use web results only.
 - Preserve exact scores, dates, percentages, and dollar amounts — do not round or omit them.
 - If specialist outputs conflict, state the conflict rather than picking arbitrarily.
-- If specialists used code_interpreter / agent-sandbox: quote the concrete stdout lines
-  and any [agent-sandbox claim=... sandbox=... history=... result=...] header.
-  Do not invent, soften, or omit program output. Runtime errors (e.g. missing
-  /etc/hostname) are valid sandbox results — report them as-is."""
+- If specialists used sandbox MCP execution: quote the concrete stdout lines
+  and exit code. Do not invent, soften, or omit program output. Runtime errors are
+  valid sandbox results — report them as-is."""
 
     _emit(on_event, "working_start", {"message": "Synthesizer writing..."})
     try:
@@ -529,20 +596,21 @@ def critic_node(state: OverallState, llm: Any, on_event: EventCallback = None) -
     code_rule = ""
     if code_required:
         code_rule = (
-            "\nThe task requires real code execution.\n"
-            "- Set needs_improvement=true ONLY if the draft has no real sandbox/"
-            "code_interpreter results (no stdout, no [agent-sandbox] evidence) "
-            "and invents numbers or admits it did not run code.\n"
-            "- If the draft already includes concrete sandbox stdout (hostname, "
-            "pid, printed values, or a runtime error from the sandbox), set "
-            "needs_improvement=false.\n"
-            "- Do NOT reject for style, missing prose, or 'should mention sandbox "
-            "more clearly' when the actual tool output is present.\n"
-            "- Do NOT request re-running code or fetching execution history when "
-            "results are already present.\n"
+            "\nThe task requires real code execution via sandbox MCP tools.\n"
+            "- Set needs_improvement=true if the draft has no sandbox "
+            "execution result (no stdout / exit_code evidence) and invents "
+            "numbers or admits it did not run code.\n"
+            "- If the draft already includes concrete sandbox stdout or an "
+            "execution tool result, set needs_improvement=false.\n"
+            "- Do NOT reject for style when the actual tool output is present.\n"
+            "- Do NOT request a local interpreter — none exists.\n"
         )
 
     prompt = f"""You are a quality reviewer.
+
+{current_date_instruction()}
+When the task is about current events, recency, or "today", judge dates
+against that calendar date — not a training cutoff.
 
 Task: {task}
 
@@ -555,6 +623,8 @@ If the task asks for a specific figure and the draft includes that figure, set
 needs_improvement to false unless there is a clear factual error or the answer
 admits it could not find the information.
 Prefer needs_improvement=false when the draft already answers the task with tool-grounded facts.
+Do not flag a correctly dated current-events answer as wrong because the year
+is after your training data.
 {code_rule}"""
 
     structured_llm = llm.with_structured_output(CriticOutput)
@@ -567,9 +637,14 @@ Prefer needs_improvement=false when the draft already answers the task with tool
     needs_improvement = bool(response.needs_improvement)
     critique = response.critique
 
-    # Precision guard (workflow unchanged): do not replan successful sandbox runs
-    # over stylistic critic noise.
-    if (
+    if code_required and not _has_sandbox_evidence(final_answer, combined):
+        needs_improvement = True
+        critique = (
+            f"{critique}\n\n"
+            "[guard] Code was claimed or required but no sandbox MCP "
+            "execution result appears in the tool trace. Rejecting bypass."
+        )
+    elif (
         needs_improvement
         and code_required
         and _has_sandbox_evidence(final_answer, combined)
@@ -577,8 +652,8 @@ Prefer needs_improvement=false when the draft already answers the task with tool
         needs_improvement = False
         critique = (
             f"{critique}\n\n"
-            "[override] Sandbox/tool evidence already present — accepting draft "
-            "without replan."
+            "[override] Sandbox MCP execution evidence already present "
+            "— accepting draft without replan."
         )
 
     _emit(on_event, "critic_done", {

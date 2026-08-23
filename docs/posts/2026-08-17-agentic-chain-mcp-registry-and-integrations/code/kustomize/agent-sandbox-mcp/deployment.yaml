@@ -1,0 +1,67 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agent-sandbox-mcp
+  labels:
+    app: agent-sandbox-mcp
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: agent-sandbox-mcp
+  template:
+    metadata:
+      labels:
+        app: agent-sandbox-mcp
+    spec:
+      serviceAccountName: agent-sandbox-mcp
+      containers:
+        - name: mcp
+          image: k8s-agent-sandbox-mcp:v0.5.4
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8000
+          env:
+            - name: K8S_SANDBOX_CONNECTION__TYPE
+              value: in-cluster
+            - name: SANDBOX_WARMPOOL
+              value: python-sandbox-warmpool
+            - name: SANDBOX_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: SANDBOX_SHUTDOWN_AFTER_SECONDS
+              value: "180"
+          volumeMounts:
+            - name: server-json
+              mountPath: /config
+              readOnly: true
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 8
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 18
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 6
+          resources:
+            requests:
+              cpu: 25m
+              memory: 96Mi
+            limits:
+              cpu: 200m
+              memory: 192Mi
+      volumes:
+        - name: server-json
+          configMap:
+            name: agent-sandbox-mcp-server

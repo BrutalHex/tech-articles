@@ -22,6 +22,7 @@ CHECKPOINTS_DB_URI = os.getenv(
     "CHECKPOINTS_DB_URI",
     "postgresql://langgraph:langgraph@localhost:5432/langgraph",
 )
+MCP_REGISTRY_URL = os.getenv("MCP_REGISTRY_URL", "http://mcp-registry:8080")
 
 # LangSmith: keep endpoint from .env (EU or US); default to US if unset
 _DEFAULT_LANGSMITH = "https://api.smith.langchain.com"

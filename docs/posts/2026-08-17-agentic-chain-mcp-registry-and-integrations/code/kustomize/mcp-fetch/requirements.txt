@@ -1,0 +1,7 @@
+# Official Fetch MCP (PyPI name mcp-server-fetch, npm/registry
+# @modelcontextprotocol/server-fetch). Pin MCP 1.x: 2.x renamed APIs this
+# server still uses. No Node/Chromium — readabilipy uses the Python fallback.
+mcp-server-fetch==2026.8.18
+mcp>=1.12.0,<2
+uvicorn>=0.32.0
+starlette>=0.40.0

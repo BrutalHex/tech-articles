@@ -41,6 +41,9 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /var/lib/postgresql/data
+            - name: initdb
+              mountPath: /docker-entrypoint-initdb.d/02-mcp-registry.sql
+              subPath: 02-mcp-registry.sql
           readinessProbe:
             exec:
               command: ["pg_isready", "-U", "langgraph", "-d", "langgraph"]
@@ -58,6 +61,9 @@ spec:
       volumes:
         - name: data
           emptyDir: {}
+        - name: initdb
+          configMap:
+            name: postgres-initdb
 ---
 apiVersion: v1
 kind: Service
