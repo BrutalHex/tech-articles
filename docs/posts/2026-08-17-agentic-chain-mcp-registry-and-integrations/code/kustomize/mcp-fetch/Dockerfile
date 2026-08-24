@@ -1,6 +1,5 @@
 # Official mcp-server-fetch (@modelcontextprotocol/server-fetch) wrapped for
-# streamable-HTTP + kubelet probes. Slim Python only — Chromium would OOM a
-# ~1.8Gi WSL/kind host.
+# streamable-HTTP + kubelet probes.
 FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \

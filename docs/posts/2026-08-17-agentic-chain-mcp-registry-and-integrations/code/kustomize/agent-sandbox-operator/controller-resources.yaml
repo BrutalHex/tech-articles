@@ -1,4 +1,4 @@
-# Strategic-merge patch: constrain controller for low-memory WSL/kind POC.
+# Strategic-merge patch: constrain controller for low-memory kind POC.
 # Resource limits live here (kustomize only — never kubectl set resources).
 apiVersion: apps/v1
 kind: Deployment

@@ -42,7 +42,8 @@ function getPosts() {
       }
     })
     .filter(Boolean)
-    .sort((a, b) => b.date.localeCompare(a.date))
+    // Oldest first so the listing, sidebar, and prev/next follow series order.
+    .sort((a, b) => a.date.localeCompare(b.date))
 }
 
 function groupByCategory(posts) {

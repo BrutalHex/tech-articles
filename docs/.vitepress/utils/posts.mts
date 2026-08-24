@@ -49,7 +49,8 @@ export function getPosts(): PostMeta[] {
       }
     })
     .filter((post): post is PostMeta => post !== null)
-    .sort((a, b) => b.date.localeCompare(a.date))
+    // Oldest first so the listing, sidebar, and prev/next follow series order.
+    .sort((a, b) => a.date.localeCompare(b.date))
 }
 
 export function getSidebar() {
