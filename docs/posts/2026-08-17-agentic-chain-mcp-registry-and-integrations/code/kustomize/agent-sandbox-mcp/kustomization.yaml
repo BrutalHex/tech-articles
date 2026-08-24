@@ -1,0 +1,21 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: agentic-chain
+
+resources:
+  - rbac.yaml
+  - deployment.yaml
+  - service.yaml
+
+configMapGenerator:
+  - name: agent-sandbox-mcp-server
+    files:
+      - server.json
+    options:
+      disableNameSuffixHash: true
+
+images:
+  - name: k8s-agent-sandbox-mcp
+    newName: k8s-agent-sandbox-mcp
+    newTag: v0.5.4
