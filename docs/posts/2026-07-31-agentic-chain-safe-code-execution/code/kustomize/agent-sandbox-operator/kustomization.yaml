@@ -7,7 +7,6 @@ kind: Kustomization
 resources:
   - https://github.com/kubernetes-sigs/agent-sandbox/releases/download/v0.5.4/sandbox-with-extensions.yaml
 
-# Upstream release has no requests/limits; constrain for low-memory WSL/kind POC.
 patches:
   - path: controller-resources.yaml
     target:

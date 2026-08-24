@@ -214,8 +214,6 @@ That last point is a security requirement, not a convenience. Anonymous publish 
 
 The stack overlay is where the new pieces land. [`kustomize/stack/kustomization.yaml`](https://github.com/BrutalHex/tech-articles/blob/main/docs/posts/2026-08-17-agentic-chain-mcp-registry-and-integrations/code/kustomize/stack/kustomization.yaml#L8-L16) still pulls postgres, chroma, the warm pool, and the Chainlit app. It now also pulls the registry, the register Job, and the two MCP servers:
 
-[`kustomize/stack/kustomization.yaml`](https://github.com/BrutalHex/tech-articles/blob/main/docs/posts/2026-08-17-agentic-chain-mcp-registry-and-integrations/code/kustomize/stack/kustomization.yaml#L8-L16)
-
 ```yaml
 resources:
   - namespace.yaml

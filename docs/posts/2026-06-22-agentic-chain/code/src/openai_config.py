@@ -23,7 +23,7 @@ def _api_key() -> str:
 
 
 def verify_openai_connectivity() -> None:
-    """Check DNS with retries — WSL DNS can be briefly unavailable."""
+    """Check DNS with retries"""
     import time
 
     last_error: Exception | None = None
@@ -37,7 +37,6 @@ def verify_openai_connectivity() -> None:
 
     raise RuntimeError(
         "Cannot resolve api.openai.com after several retries (DNS/network error). "
-        "In WSL, check /etc/resolv.conf or run: wsl --shutdown, then reopen WSL."
     ) from last_error
 
 

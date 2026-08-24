@@ -162,7 +162,6 @@ setup-kind: tools $(KIND_CONFIG) ## Create (or reuse) a KIND cluster with gVisor
 	fi; \
 	echo "Waiting for KIND cluster to be ready..."; \
 	$(KUBECTL) wait --for=condition=Ready nodes --all --timeout=300s; \
-	# POC on small WSL hosts: single CoreDNS is enough and saves ~70Mi.
 	# local-path lives in local-path-storage (not kube-system) on kind.
 	-$(KUBECTL) -n kube-system scale deploy/coredns --replicas=1; \
 	-$(KUBECTL) -n local-path-storage scale deploy/local-path-provisioner --replicas=0 2>/dev/null || true; \
@@ -181,12 +180,11 @@ delete-kind: tools ## Delete KIND cluster (CLUSTER_NAME=kind)
 	fi
 
 ##@ Docker image
-# WSL/Docker Desktop often breaks with credsStore=desktop.exe; use a clean config for builds.
 DOCKER_CONFIG_DIR := $(CURDIR)/.docker-build
 export DOCKER_CONFIG := $(DOCKER_CONFIG_DIR)
 # Single-platform, no attestations — kind load fails on multi-arch index digests.
 DOCKER_BUILD_FLAGS ?= --platform=linux/amd64 --provenance=false --sbom=false
-# Build inside a Docker CLI container so WSL host Docker config quirks stay out of band.
+# Build inside a Docker CLI container so host Docker config quirks stay out of band.
 DOCKER_BUILD_CONTAINER ?= docker:27-cli
 
 docker-config: ## Prepare a credential-store-free Docker config for reliable builds
@@ -195,7 +193,7 @@ docker-config: ## Prepare a credential-store-free Docker config for reliable bui
 
 docker-build: docker-config ## Build the Chainlit app image in a container (tag=$(IMAGE))
 	@echo "Building $(IMAGE) from $(SRC_DIR) via $(DOCKER_BUILD_CONTAINER)"
-	@# Mount source + docker.sock; run docker CLI in a container (WSL-friendly).
+	@# Mount source + docker.sock; run docker CLI in a container.
 	@# Writable /root/.docker so buildx can write activity metadata.
 	docker run --rm \
 		-v /var/run/docker.sock:/var/run/docker.sock \

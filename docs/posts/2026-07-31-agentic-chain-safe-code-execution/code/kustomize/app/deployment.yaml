@@ -108,7 +108,7 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.namespace
-            # Short TTL keeps orphan claims from pinning sandbox pods on small WSL hosts.
+            # Short TTL keeps orphan claims from pinning sandbox pods on small hosts.
             - name: SANDBOX_SHUTDOWN_AFTER_SECONDS
               value: "900"
             - name: CHAINLIT_HOST

@@ -1,6 +1,4 @@
 """Seed Chroma collections used by specialist RAG tools.
-
-Designed for kind/WSL init-containers: long DNS/TCP retries under memory pressure.
 """
 
 from __future__ import annotations
