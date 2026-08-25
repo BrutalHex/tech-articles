@@ -10,7 +10,7 @@ description: Standardizing the Tool Layer in the Agentic Chain
 
 ## Prologue
 
-The first Agentic Chain article built a LangGraph team: a planner, parallel specialists, RAG tools, a synthesizer, and a critic. The follow-up, [The Secure Code Execution For LLMs](https://tech.mohammadabbasi.com/posts/2026-07-31-agentic-chain-safe-code-execution/), moved Python off the application process and into a gVisor warm-pool sandbox. Both designs still had the same structural weakness at the tool boundary. Web search was an in-process DuckDuckGo wrapper. Code execution was an in-process `SandboxClient` that spoke Kubernetes CRDs. Those tools existed only inside this one Python package. A second agent — Claude Code on a laptop, another LangGraph service, a future specialist process — **could not** discover them, could not share the same endpoint, and had to re-implement the same SDK calls.
+The first Agentic Chain article built a LangGraph team: a planner, parallel specialists, RAG tools, a synthesizer, and a critic. The follow-up, [The Secure Code Execution For LLMs](https://tech.mohammadabbasi.com/posts/2026-07-31-agentic-chain-safe-code-execution/), moved code execution off the agent's host machine process and into a gVisor warm-pool sandbox. Both designs still had the same structural weakness at the tool boundary. Web search was an in-process DuckDuckGo wrapper. Code execution was an in-process `SandboxClient` that spoke Kubernetes CRDs. Those tools existed only inside this one Python package. A second agent — Claude Code on a laptop, another LangGraph service, a future specialist process — **could not** discover them, could not share the same endpoint, and had to re-implement the same SDK calls.
 
 ![diagram](assets/logic.jpg)
 
