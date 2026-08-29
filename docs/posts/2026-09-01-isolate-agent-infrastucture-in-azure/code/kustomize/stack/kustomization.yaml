@@ -1,0 +1,26 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# App stack namespace: postgres + chroma + MCP registry + MCP servers +
+# agent-sandbox warm pool + Chainlit UI deployment.
+namespace: agentic-chain
+
+resources:
+  - namespace.yaml
+  - ../base
+  - ../mcp-register
+  - ../mcp-registry
+  - ../mcp-fetch
+  - ../agent-sandbox-mcp
+  - ../sandbox
+  - ../app
+
+images:
+  - name: agentic-chain-ui
+    newName: agentic-chain-ui
+    newTag: v2026.08.01
+
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: agentic-chain
+    includeSelectors: false

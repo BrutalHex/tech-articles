@@ -1,0 +1,75 @@
+# docker-compose chromadb/chroma equivalent.
+# Reuses the app image (already contains chromadb) so kind does not need a
+# separate Docker Hub pull when registry access is flaky / memory is tight.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: chroma
+  labels:
+    app: chroma
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: chroma
+  template:
+    metadata:
+      labels:
+        app: chroma
+    spec:
+      containers:
+        - name: chroma
+          image: agentic-chain-ui:v2026.08.01
+          imagePullPolicy: IfNotPresent
+          command: ["chroma", "run", "--host", "0.0.0.0", "--port", "8000", "--path", "/chroma/chroma"]
+          ports:
+            - name: http
+              containerPort: 8000
+          env:
+            - name: ANONYMIZED_TELEMETRY
+              value: "FALSE"
+            - name: ALLOW_RESET
+              value: "TRUE"
+          resources:
+            requests:
+              cpu: 25m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 192Mi
+          volumeMounts:
+            - name: data
+              mountPath: /chroma/chroma
+          readinessProbe:
+            httpGet:
+              path: /api/v2/heartbeat
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 36
+          livenessProbe:
+            httpGet:
+              path: /api/v2/heartbeat
+              port: http
+            initialDelaySeconds: 45
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 6
+      volumes:
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: chroma
+  labels:
+    app: chroma
+spec:
+  selector:
+    app: chroma
+  ports:
+    - name: http
+      port: 8000
+      targetPort: http

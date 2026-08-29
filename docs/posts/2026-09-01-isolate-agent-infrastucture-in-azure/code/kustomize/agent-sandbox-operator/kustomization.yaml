@@ -1,0 +1,16 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Core + extensions controller (CRDs, webhook, SandboxWarmPool/Claim/Template).
+# Pin to a release tag: https://github.com/kubernetes-sigs/agent-sandbox/releases
+# Resource limits applied via patches — never kubectl set resources.
+resources:
+  - https://github.com/kubernetes-sigs/agent-sandbox/releases/download/v0.5.4/sandbox-with-extensions.yaml
+
+patches:
+  - path: controller-resources.yaml
+    target:
+      group: apps
+      version: v1
+      kind: Deployment
+      name: agent-sandbox-controller
