@@ -1,0 +1,7 @@
+.docker-build/
+.cache/
+kustomize/kind-config.generated.yaml
+**/.venv/
+**/__pycache__/
+**/*.pyc
+.env

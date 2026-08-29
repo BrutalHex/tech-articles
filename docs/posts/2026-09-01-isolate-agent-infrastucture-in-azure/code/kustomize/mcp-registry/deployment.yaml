@@ -1,0 +1,103 @@
+# Official MCP Registry (ghcr.io/modelcontextprotocol/registry).
+# Discovery + publish API for in-cluster MCP servers. Shares the existing
+# postgres Deployment (database mcp_registry) so we do not run a second DB.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mcp-registry
+  labels:
+    app: mcp-registry
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mcp-registry
+  template:
+    metadata:
+      labels:
+        app: mcp-registry
+    spec:
+      initContainers:
+        - name: wait-postgres
+          image: postgres:16-alpine
+          imagePullPolicy: IfNotPresent
+          command:
+            - sh
+            - -c
+            - |
+              until pg_isready -h postgres -U langgraph -d mcp_registry; do
+                echo "waiting for postgres/mcp_registry..."
+                sleep 2
+              done
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 50m
+              memory: 32Mi
+      containers:
+        - name: registry
+          image: ghcr.io/modelcontextprotocol/registry:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: GOMAXPROCS
+              value: "1"
+            - name: GOMEMLIMIT
+              value: "64MiB"
+            - name: MCP_REGISTRY_SERVER_ADDRESS
+              value: ":8080"
+            - name: MCP_REGISTRY_DATABASE_URL
+              value: postgres://langgraph:langgraph@postgres:5432/mcp_registry?sslmode=disable
+            - name: MCP_REGISTRY_ENABLE_ANONYMOUS_AUTH
+              value: "true"
+            # 32-byte Ed25519 seed (hex). POC-only; do not reuse outside kind.
+            - name: MCP_REGISTRY_JWT_PRIVATE_KEY
+              value: "8103179d8ef955f6d3de6d6217224a909ec4060529dfeb1d4ca5a994537658cd"
+            # Empty seed: start blank; MCP servers self-register.
+            - name: MCP_REGISTRY_SEED_FROM
+              value: ""
+            - name: MCP_REGISTRY_ENABLE_REGISTRY_VALIDATION
+              value: "false"
+            - name: MCP_REGISTRY_OIDC_ENABLED
+              value: "false"
+          readinessProbe:
+            httpGet:
+              path: /v0.1/health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 18
+          livenessProbe:
+            httpGet:
+              path: /v0.1/health
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 6
+          resources:
+            requests:
+              cpu: 15m
+              memory: 32Mi
+            limits:
+              cpu: 80m
+              memory: 80Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mcp-registry
+  labels:
+    app: mcp-registry
+spec:
+  selector:
+    app: mcp-registry
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http

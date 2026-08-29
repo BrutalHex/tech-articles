@@ -1,0 +1,75 @@
+# Registers in-cluster MCP servers after they (and the registry) are up.
+# A Job is used instead of a container postStart hook so a slow registry
+# cannot mark the MCP Deployments as failed.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: mcp-register
+  labels:
+    app: mcp-register
+spec:
+  ttlSecondsAfterFinished: 120
+  backoffLimit: 12
+  template:
+    metadata:
+      labels:
+        app: mcp-register
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: register
+          image: agentic-chain-mcp-fetch:v2026.08.01
+          imagePullPolicy: IfNotPresent
+          command:
+            - python
+            - -c
+            - |
+              import os, pathlib, subprocess, sys
+              # Publisher wiring: every mounted */server.json is published.
+              # The agent does not read this list — it GETs /v0.1/servers.
+              ready_by_dir = {
+                  "fetch": "http://mcp-fetch:8000/readyz",
+                  "sandbox": "http://agent-sandbox-mcp:8000/readyz",
+              }
+              env = os.environ.copy()
+              env["MCP_REGISTRY_URL"] = "http://mcp-registry:8080"
+              roots = sorted(pathlib.Path("/config").glob("*/server.json"))
+              if not roots:
+                  raise SystemExit("no /config/*/server.json mounted")
+              for path in roots:
+                  env["MCP_SERVER_JSON"] = str(path)
+                  env["MCP_WAIT_LOCAL"] = ready_by_dir.get(
+                      path.parent.name, f"http://{path.parent.name}:8000/readyz"
+                  )
+                  print(f"registering {path}", flush=True)
+                  rc = subprocess.call([sys.executable, "/register/register.py"], env=env)
+                  if rc != 0:
+                      raise SystemExit(rc)
+              print("all servers registered", flush=True)
+          volumeMounts:
+            - name: register
+              mountPath: /register
+              readOnly: true
+            - name: fetch
+              mountPath: /config/fetch
+              readOnly: true
+            - name: sandbox
+              mountPath: /config/sandbox
+              readOnly: true
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 50m
+              memory: 48Mi
+      volumes:
+        - name: register
+          configMap:
+            name: mcp-register
+        - name: fetch
+          configMap:
+            name: mcp-fetch-server
+        - name: sandbox
+          configMap:
+            name: agent-sandbox-mcp-server

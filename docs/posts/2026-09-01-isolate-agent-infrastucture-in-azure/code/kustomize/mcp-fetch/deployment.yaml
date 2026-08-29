@@ -1,0 +1,72 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mcp-fetch
+  labels:
+    app: mcp-fetch
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mcp-fetch
+  template:
+    metadata:
+      labels:
+        app: mcp-fetch
+    spec:
+      containers:
+        - name: mcp
+          image: agentic-chain-mcp-fetch:v2026.08.01
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8000
+          env:
+            - name: IGNORE_ROBOTS_TXT
+              value: "true"
+          volumeMounts:
+            - name: server-json
+              mountPath: /config
+              readOnly: true
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 18
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 6
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+      volumes:
+        - name: server-json
+          configMap:
+            name: mcp-fetch-server
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mcp-fetch
+  labels:
+    app: mcp-fetch
+spec:
+  selector:
+    app: mcp-fetch
+  ports:
+    - name: http
+      port: 8000
+      targetPort: http

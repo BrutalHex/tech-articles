@@ -1,0 +1,14 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Namespace is also set by the stack overlay; kept here for staged `make apply`.
+namespace: agentic-chain
+
+resources:
+  - rbac.yaml
+  - deployment.yaml
+
+images:
+  - name: agentic-chain-ui
+    newName: agentic-chain-ui
+    newTag: v2026.08.01
