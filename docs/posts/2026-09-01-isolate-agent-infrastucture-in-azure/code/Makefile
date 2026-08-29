@@ -2,6 +2,7 @@
 
 .PHONY: help tools \
 	install-curl install-kind install-kubectl install-kustomize install-gvisor \
+	install-azure-cli install-terraform install-terragrunt \
 	setup-kind delete-kind \
 	docker-config docker-build docker-build-sandbox-mcp docker-build-fetch-mcp \
 	docker-test docker-push load-kind \
@@ -18,6 +19,9 @@ AGENT_SANDBOX_VERSION ?= v0.5.4
 CURL_VERSION ?= 8.21.0
 # gVisor release channel for host binaries mounted into kind nodes.
 GVISOR_RELEASE ?= latest
+AZ_VERSION ?= 2.89.1
+TERRAFORM_VERSION ?= 1.16.0
+TERRAGRUNT_VERSION ?= v1.1.4
 
 # Image
 IMAGE_NAME ?= agentic-chain-ui
@@ -76,12 +80,15 @@ CURL := $(BIN_DIR)/curl
 KIND := $(BIN_DIR)/kind
 KUBECTL := $(BIN_DIR)/kubectl
 KUSTOMIZE := $(BIN_DIR)/kustomize
+AZ := $(BIN_DIR)/az
+TERRAFORM := $(BIN_DIR)/terraform
+TERRAGRUNT := $(BIN_DIR)/terragrunt
 
 help: ## Show this help
 	@awk 'BEGIN {FS = ":.*##"; printf "\nUsage:\n  make \033[36m<target>\033[0m\n"} /^[a-zA-Z_0-9-]+:.*?##/ { printf "  \033[36m%-22s\033[0m %s\n", $$1, $$2 } /^##@/ { printf "\n\033[1m%s\033[0m\n", substr($$0, 5) } ' $(MAKEFILE_LIST)
 
 ##@ Tooling
-tools: install-curl install-kind install-kubectl install-kustomize install-gvisor ## Install curl, kind, kubectl, kustomize, gVisor into ./bin
+tools: install-curl install-kind install-kubectl install-kustomize install-gvisor install-azure-cli install-terraform install-terragrunt ## Install curl, kind, kubectl, kustomize, gVisor, Azure CLI, terraform, terragrunt into ./bin
 
 install-curl: ## Install static curl into ./bin if missing (linux/darwin)
 	@mkdir -p $(BIN_DIR)
@@ -148,6 +155,52 @@ install-gvisor: install-curl ## Install gVisor runsc + containerd shim into ./bi
 		chmod a+rx $(BIN_DIR)/runsc $(BIN_DIR)/containerd-shim-runsc-v1; \
 	fi
 	@$(BIN_DIR)/runsc --version 2>/dev/null || $(BIN_DIR)/runsc -version 2>/dev/null || echo "runsc installed at $(BIN_DIR)/runsc"
+
+# Azure CLI has no single static binary; install a local venv and symlink az.
+install-azure-cli: ## Install Azure CLI (az) into ./bin if missing
+	@mkdir -p $(BIN_DIR)
+	@if [ ! -x $(AZ) ]; then \
+		echo "Installing Azure CLI $(AZ_VERSION) into $(BIN_DIR)..."; \
+		if ! command -v python3 >/dev/null 2>&1; then echo "Need python3 to install Azure CLI"; exit 1; fi; \
+		python3 -m venv $(BIN_DIR)/.azure-cli; \
+		$(BIN_DIR)/.azure-cli/bin/pip install --disable-pip-version-check --no-cache-dir "azure-cli==$(AZ_VERSION)"; \
+		ln -sfn .azure-cli/bin/az $(AZ); \
+	fi
+	@$(AZ) version
+
+install-terraform: install-curl ## Install Terraform into ./bin if missing
+	@mkdir -p $(BIN_DIR)
+	@if [ ! -x $(TERRAFORM) ]; then \
+		echo "Installing Terraform $(TERRAFORM_VERSION) for ${OS}/${ARCH}..."; \
+		case "${OS}" in \
+		  darwin|linux) ;; \
+		  *) echo "Unsupported OS: ${OS}"; exit 1 ;; \
+		esac; \
+		tmp=$$(mktemp -d); \
+		$(CURL) -fsSL -o "$$tmp/terraform.zip" \
+		  "https://releases.hashicorp.com/terraform/$(TERRAFORM_VERSION)/terraform_$(TERRAFORM_VERSION)_${OS}_${ARCH}.zip"; \
+		if command -v unzip >/dev/null 2>&1; then \
+			unzip -o -q "$$tmp/terraform.zip" terraform -d $(BIN_DIR); \
+		else \
+			python3 -c 'import zipfile,sys; zipfile.ZipFile(sys.argv[1]).extract("terraform", sys.argv[2])' "$$tmp/terraform.zip" "$(BIN_DIR)"; \
+		fi; \
+		chmod +x $(TERRAFORM); \
+		rm -rf "$$tmp"; \
+	fi
+	@$(TERRAFORM) version
+
+install-terragrunt: install-curl ## Install Terragrunt into ./bin if missing
+	@mkdir -p $(BIN_DIR)
+	@if [ ! -x $(TERRAGRUNT) ]; then \
+		echo "Installing Terragrunt $(TERRAGRUNT_VERSION) for ${OS}/${ARCH}..."; \
+		case "${OS}" in \
+		  darwin|linux) $(CURL) -fsSL -o $(TERRAGRUNT) \
+		    "https://github.com/gruntwork-io/terragrunt/releases/download/$(TERRAGRUNT_VERSION)/terragrunt_${OS}_${ARCH}" ;; \
+		  *) echo "Unsupported OS: ${OS}"; exit 1 ;; \
+		esac; \
+		chmod +x $(TERRAGRUNT); \
+	fi
+	@$(TERRAGRUNT) --version
 
 ##@ Kind cluster
 KIND_CONFIG_TPL := $(KUSTOMIZE_DIR)/kind-config.yaml.tpl
